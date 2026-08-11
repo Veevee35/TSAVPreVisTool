@@ -1,0 +1,26 @@
+# Unreal-generated output
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Generated output inside plugins
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# IDE and local build metadata
+.vs/
+.idea/
+.vscode/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
