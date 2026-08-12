@@ -4,6 +4,7 @@
 
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "TSAVLEDPanelDefinition.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVLEDWall)
@@ -38,39 +39,57 @@ void ATSAVLEDWall::OnConstruction(const FTransform& Transform)
 float ATSAVLEDWall::GetWallWidthCm() const
 {
 	const int32 SafeColumns = FMath::Clamp(Columns, 1, 64);
-	return SafeColumns * FMath::Max(PanelWidthCm, 10.0f) + FMath::Max(SafeColumns - 1, 0) * FMath::Max(PanelGapCm, 0.0f) + 2.0f * FMath::Max(BorderCm, 0.0f);
+	return SafeColumns * GetEffectivePanelWidthCm() + FMath::Max(SafeColumns - 1, 0) * FMath::Max(PanelGapCm, 0.0f) + 2.0f * GetEffectiveBorderCm();
 }
 
 float ATSAVLEDWall::GetWallHeightCm() const
 {
 	const int32 SafeRows = FMath::Clamp(Rows, 1, 64);
-	return SafeRows * FMath::Max(PanelHeightCm, 10.0f) + FMath::Max(SafeRows - 1, 0) * FMath::Max(PanelGapCm, 0.0f) + 2.0f * FMath::Max(BorderCm, 0.0f);
+	return SafeRows * GetEffectivePanelHeightCm() + FMath::Max(SafeRows - 1, 0) * FMath::Max(PanelGapCm, 0.0f) + 2.0f * GetEffectiveBorderCm();
+}
+
+FIntPoint ATSAVLEDWall::GetWallResolutionPixels() const
+{
+	return GetNativePixelResolution();
+}
+
+FVector2D ATSAVLEDWall::GetPanelPixelPitchMm() const
+{
+	const FIntPoint PanelResolution = GetEffectivePanelResolution();
+	return FVector2D(
+		GetEffectivePanelWidthCm() * 10.0f / PanelResolution.X,
+		GetEffectivePanelHeightCm() * 10.0f / PanelResolution.Y);
+}
+
+void ATSAVLEDWall::RebuildPanelLayout()
+{
+	RerunConstructionScripts();
 }
 
 void ATSAVLEDWall::UpdateGeometry()
 {
 	Columns = FMath::Clamp(Columns, 1, 64);
 	Rows = FMath::Clamp(Rows, 1, 64);
-	PanelWidthCm = FMath::Max(PanelWidthCm, 10.0f);
-	PanelHeightCm = FMath::Max(PanelHeightCm, 10.0f);
 	PanelGapCm = FMath::Max(PanelGapCm, 0.0f);
-	WallDepthCm = FMath::Max(WallDepthCm, 1.0f);
-	BorderCm = FMath::Max(BorderCm, 0.0f);
+	const float EffectivePanelWidth = GetEffectivePanelWidthCm();
+	const float EffectivePanelHeight = GetEffectivePanelHeightCm();
+	const float EffectiveDepth = GetEffectivePanelDepthCm();
+	const float EffectiveBorder = GetEffectiveBorderCm();
 
-	const float DisplayWidth = Columns * PanelWidthCm + (Columns - 1) * PanelGapCm;
-	const float DisplayHeight = Rows * PanelHeightCm + (Rows - 1) * PanelGapCm;
-	const float OuterWidth = DisplayWidth + 2.0f * BorderCm;
-	const float OuterHeight = DisplayHeight + 2.0f * BorderCm;
+	const float DisplayWidth = Columns * EffectivePanelWidth + (Columns - 1) * PanelGapCm;
+	const float DisplayHeight = Rows * EffectivePanelHeight + (Rows - 1) * PanelGapCm;
+	const float OuterWidth = DisplayWidth + 2.0f * EffectiveBorder;
+	const float OuterHeight = DisplayHeight + 2.0f * EffectiveBorder;
 	const float ScreenDepth = 0.4f;
-	const float FrontX = WallDepthCm * 0.5f;
+	const float FrontX = EffectiveDepth * 0.5f;
 	const float TrimDepth = 1.0f;
 
-	SetBox(Backing, FVector(WallDepthCm, OuterWidth, OuterHeight), FVector::ZeroVector);
+	SetBox(Backing, FVector(EffectiveDepth, OuterWidth, OuterHeight), FVector::ZeroVector);
 	SetBox(DisplaySurface, FVector(ScreenDepth, DisplayWidth, DisplayHeight), FVector(FrontX + ScreenDepth * 0.5f, 0.0f, 0.0f));
-	SetBox(TopBorder, FVector(TrimDepth, OuterWidth, BorderCm), FVector(FrontX + TrimDepth * 0.5f, 0.0f, (DisplayHeight + BorderCm) * 0.5f));
-	SetBox(BottomBorder, FVector(TrimDepth, OuterWidth, BorderCm), FVector(FrontX + TrimDepth * 0.5f, 0.0f, -(DisplayHeight + BorderCm) * 0.5f));
-	SetBox(LeftBorder, FVector(TrimDepth, BorderCm, DisplayHeight), FVector(FrontX + TrimDepth * 0.5f, -(DisplayWidth + BorderCm) * 0.5f, 0.0f));
-	SetBox(RightBorder, FVector(TrimDepth, BorderCm, DisplayHeight), FVector(FrontX + TrimDepth * 0.5f, (DisplayWidth + BorderCm) * 0.5f, 0.0f));
+	SetBox(TopBorder, FVector(TrimDepth, OuterWidth, EffectiveBorder), FVector(FrontX + TrimDepth * 0.5f, 0.0f, (DisplayHeight + EffectiveBorder) * 0.5f));
+	SetBox(BottomBorder, FVector(TrimDepth, OuterWidth, EffectiveBorder), FVector(FrontX + TrimDepth * 0.5f, 0.0f, -(DisplayHeight + EffectiveBorder) * 0.5f));
+	SetBox(LeftBorder, FVector(TrimDepth, EffectiveBorder, DisplayHeight), FVector(FrontX + TrimDepth * 0.5f, -(DisplayWidth + EffectiveBorder) * 0.5f, 0.0f));
+	SetBox(RightBorder, FVector(TrimDepth, EffectiveBorder, DisplayHeight), FVector(FrontX + TrimDepth * 0.5f, (DisplayWidth + EffectiveBorder) * 0.5f, 0.0f));
 
 	ApplyFrameMaterial(Backing);
 	ApplyFrameMaterial(TopBorder);
@@ -84,6 +103,7 @@ void ATSAVLEDWall::UpdateGeometry()
 
 	if (!bShowPanelSeams)
 	{
+		UpdatePanelLinks();
 		return;
 	}
 
@@ -95,15 +115,82 @@ void ATSAVLEDWall::UpdateGeometry()
 
 	for (int32 Column = 1; Column < Columns; ++Column)
 	{
-		const float Y = LeftEdge + Column * PanelWidthCm + (Column - 0.5f) * PanelGapCm;
+		const float Y = LeftEdge + Column * EffectivePanelWidth + (Column - 0.5f) * PanelGapCm;
 		PanelSeams->AddInstance(FTransform(FRotator::ZeroRotator, FVector(SeamX, Y, 0.0f), FVector(SeamDepth, SeamWidth, DisplayHeight) / 100.0f));
 	}
 
 	for (int32 Row = 1; Row < Rows; ++Row)
 	{
-		const float Z = BottomEdge + Row * PanelHeightCm + (Row - 0.5f) * PanelGapCm;
+		const float Z = BottomEdge + Row * EffectivePanelHeight + (Row - 0.5f) * PanelGapCm;
 		PanelSeams->AddInstance(FTransform(FRotator::ZeroRotator, FVector(SeamX, 0.0f, Z), FVector(SeamDepth, DisplayWidth, SeamWidth) / 100.0f));
 	}
+
+	UpdatePanelLinks();
+}
+
+FIntPoint ATSAVLEDWall::GetNativePixelResolution() const
+{
+	const FIntPoint PanelResolution = GetEffectivePanelResolution();
+	return FIntPoint(
+		FMath::Clamp(Columns, 1, 64) * PanelResolution.X,
+		FMath::Clamp(Rows, 1, 64) * PanelResolution.Y);
+}
+
+void ATSAVLEDWall::UpdatePanelLinks()
+{
+	PanelLinks.Reset(Columns * Rows);
+	const FIntPoint PanelResolution = GetEffectivePanelResolution();
+	int32 LinkIndex = 1;
+
+	for (int32 Row = 0; Row < Rows; ++Row)
+	{
+		for (int32 PositionInRow = 0; PositionInRow < Columns; ++PositionInRow)
+		{
+			const bool bReverseRow = LinkPattern == ETSAVLEDLinkPattern::RowsSerpentine && (Row % 2) == 1;
+			const int32 Column = bReverseRow ? Columns - PositionInRow - 1 : PositionInRow;
+
+			FTSAVLEDPanelLink& Link = PanelLinks.AddDefaulted_GetRef();
+			Link.LinkIndex = LinkIndex++;
+			Link.GridPosition = FIntPoint(Column, Row);
+			Link.CanvasPixelPosition = CanvasPosition + FIntPoint(Column * PanelResolution.X, Row * PanelResolution.Y);
+			Link.CabinetResolution = PanelResolution;
+		}
+	}
+}
+
+float ATSAVLEDWall::GetEffectivePanelWidthCm() const
+{
+	return FMath::Max(bUsePanelDefinition && PanelDefinition ? PanelDefinition->WidthCm : PanelWidthCm, 10.0f);
+}
+
+float ATSAVLEDWall::GetEffectivePanelHeightCm() const
+{
+	return FMath::Max(bUsePanelDefinition && PanelDefinition ? PanelDefinition->HeightCm : PanelHeightCm, 10.0f);
+}
+
+float ATSAVLEDWall::GetEffectivePanelDepthCm() const
+{
+	return FMath::Max(bUsePanelDefinition && PanelDefinition ? PanelDefinition->DepthCm : WallDepthCm, 1.0f);
+}
+
+float ATSAVLEDWall::GetEffectiveBorderCm() const
+{
+	if (bUsePanelDefinition && PanelDefinition)
+	{
+		return FMath::Max(PanelDefinition->BezelCm, 0.0f);
+	}
+
+	return FMath::Max(BorderCm, 0.0f);
+}
+
+FIntPoint ATSAVLEDWall::GetEffectivePanelResolution() const
+{
+	if (bUsePanelDefinition && PanelDefinition)
+	{
+		return PanelDefinition->GetResolution();
+	}
+
+	return FIntPoint(FMath::Max(PanelResolutionX, 1), FMath::Max(PanelResolutionY, 1));
 }
 
 void ATSAVLEDWall::SetBox(UStaticMeshComponent* Component, const FVector& SizeCm, const FVector& LocationCm) const

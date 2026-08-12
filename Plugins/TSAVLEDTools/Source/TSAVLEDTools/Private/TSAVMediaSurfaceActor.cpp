@@ -17,8 +17,8 @@
 
 namespace TSAVLEDTools::Private
 {
-	const TCHAR* DefaultDisplayMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDVideo.M_TSAV_LEDVideo");
-	const TCHAR* DefaultFrameMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDFrame.M_TSAV_LEDFrame");
+	const TCHAR* DefaultDisplayMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasVideo.M_TSAV_LEDCanvasVideo");
+	const TCHAR* DefaultFrameMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasFrame.M_TSAV_LEDCanvasFrame");
 }
 
 ATSAVMediaSurfaceActor::ATSAVMediaSurfaceActor()
@@ -115,6 +115,26 @@ UMediaTexture* ATSAVMediaSurfaceActor::GetMediaTexture() const
 	return MediaComponent ? MediaComponent->GetMediaTexture() : nullptr;
 }
 
+FIntPoint ATSAVMediaSurfaceActor::GetSurfaceResolutionPixels() const
+{
+	const FIntPoint Resolution = GetNativePixelResolution();
+	return FIntPoint(FMath::Max(Resolution.X, 1), FMath::Max(Resolution.Y, 1));
+}
+
+bool ATSAVMediaSurfaceActor::IsCanvasMappingValid() const
+{
+	if (!bUseCanvasMapping)
+	{
+		return true;
+	}
+
+	const FIntPoint SurfaceResolution = GetSurfaceResolutionPixels();
+	return CanvasResolution.X > 0 && CanvasResolution.Y > 0 &&
+		CanvasPosition.X >= 0 && CanvasPosition.Y >= 0 &&
+		CanvasPosition.X + SurfaceResolution.X <= CanvasResolution.X &&
+		CanvasPosition.Y + SurfaceResolution.Y <= CanvasResolution.Y;
+}
+
 void ATSAVMediaSurfaceActor::ApplyFrameMaterial(UStaticMeshComponent* MeshComponent) const
 {
 	if (MeshComponent)
@@ -172,6 +192,20 @@ void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 	}
 
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("EmissiveStrength"), EmissiveStrength);
+
+	const FIntPoint SurfaceResolution = GetSurfaceResolutionPixels();
+	const float SafeCanvasWidth = static_cast<float>(FMath::Max(CanvasResolution.X, 1));
+	const float SafeCanvasHeight = static_cast<float>(FMath::Max(CanvasResolution.Y, 1));
+	const float ScaleX = bUseCanvasMapping ? SurfaceResolution.X / SafeCanvasWidth : 1.0f;
+	const float ScaleY = bUseCanvasMapping ? SurfaceResolution.Y / SafeCanvasHeight : 1.0f;
+	const float OffsetX = bUseCanvasMapping ? CanvasPosition.X / SafeCanvasWidth : 0.0f;
+	const float OffsetY = bUseCanvasMapping ? CanvasPosition.Y / SafeCanvasHeight : 0.0f;
+
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasScaleX"), ScaleX);
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasScaleY"), ScaleY);
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasOffsetX"), OffsetX);
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasOffsetY"), OffsetY);
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasVisible"), IsCanvasMappingValid() ? 1.0f : 0.0f);
 	if (UMediaTexture* Texture = GetMediaTexture())
 	{
 		DisplayMaterialInstance->SetTextureParameterValue(TEXT("MediaTexture"), Texture);

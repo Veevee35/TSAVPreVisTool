@@ -59,6 +59,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Look", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
 	float EmissiveStrength = 3.0f;
 
+	/** Resolution of the processor canvas carried by the assigned Media Source. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Canvas")
+	FIntPoint CanvasResolution = FIntPoint(4096, 2160);
+
+	/** Top-left pixel coordinate of this panel/screen on the processor canvas. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Canvas")
+	FIntPoint CanvasPosition = FIntPoint::ZeroValue;
+
+	/** Crop the Media Source to this surface's native-resolution rectangle on the canvas. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Canvas")
+	bool bUseCanvasMapping = true;
+
 	/** Rebuild the dynamic display material and reopen the assigned source. */
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "TSAV LED|Media")
 	void RefreshMedia();
@@ -81,6 +93,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "TSAV LED|Media")
 	UMediaTexture* GetMediaTexture() const;
 
+	/** Native pixel resolution calculated by the panel or wall configurator. */
+	UFUNCTION(BlueprintPure, Category = "TSAV LED|Canvas")
+	FIntPoint GetSurfaceResolutionPixels() const;
+
+	/** True when the full surface rectangle is inside the configured canvas. */
+	UFUNCTION(BlueprintPure, Category = "TSAV LED|Canvas")
+	bool IsCanvasMappingValid() const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -97,6 +117,8 @@ protected:
 	UStaticMeshComponent* CreateGeometryComponent(FName ComponentName, bool bEnableCollision);
 
 	UMaterialInterface* ResolveFrameMaterial() const;
+
+	virtual FIntPoint GetNativePixelResolution() const PURE_VIRTUAL(ATSAVMediaSurfaceActor::GetNativePixelResolution, return FIntPoint(1, 1););
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TSAV LED|Components")
 	TObjectPtr<USceneComponent> SceneRoot;
