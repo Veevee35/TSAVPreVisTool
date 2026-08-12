@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "TSAVMediaSurfaceActor.h"
 #include "Widgets/SCompoundWidget.h"
 
 class ATSAVLEDWall;
@@ -55,6 +56,8 @@ private:
 	bool bSerpentine = true;
 	bool bShowSeams = true;
 	bool bPreviewInEditor = true;
+	ETSAVLEDSubpixelLayout SubpixelLayout = ETSAVLEDSubpixelLayout::None;
+	float SubpixelStrength = 1.0f;
 
 	TWeakObjectPtr<UTSAVLEDPanelDefinition> PanelDefinition;
 	TWeakObjectPtr<UMediaSource> MediaSource;

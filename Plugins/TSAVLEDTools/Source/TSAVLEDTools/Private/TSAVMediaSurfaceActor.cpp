@@ -19,6 +19,8 @@ namespace TSAVLEDTools::Private
 {
 	const TCHAR* DefaultDisplayMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasVideo.M_TSAV_LEDCanvasVideo");
 	const TCHAR* DefaultFrameMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasFrame.M_TSAV_LEDCanvasFrame");
+	const TCHAR* RectangleSubpixelTexturePath = TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RectangleRGB.T_TSAV_Subpixel_RectangleRGB");
+	const TCHAR* RoundSubpixelTexturePath = TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RoundRGB.T_TSAV_Subpixel_RoundRGB");
 }
 
 ATSAVMediaSurfaceActor::ATSAVMediaSurfaceActor()
@@ -192,6 +194,7 @@ void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 	}
 
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("EmissiveStrength"), EmissiveStrength);
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("SubpixelStrength"), SubpixelLayout == ETSAVLEDSubpixelLayout::None ? 0.0f : FMath::Clamp(SubpixelStrength, 0.0f, 1.0f));
 
 	const FIntPoint SurfaceResolution = GetSurfaceResolutionPixels();
 	const float SafeCanvasWidth = static_cast<float>(FMath::Max(CanvasResolution.X, 1));
@@ -206,6 +209,16 @@ void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasOffsetX"), OffsetX);
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasOffsetY"), OffsetY);
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("CanvasVisible"), IsCanvasMappingValid() ? 1.0f : 0.0f);
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("SurfaceResolutionX"), static_cast<float>(SurfaceResolution.X));
+	DisplayMaterialInstance->SetScalarParameterValue(TEXT("SurfaceResolutionY"), static_cast<float>(SurfaceResolution.Y));
+
+	const TCHAR* SubpixelTexturePath = SubpixelLayout == ETSAVLEDSubpixelLayout::RoundRGB
+		? TSAVLEDTools::Private::RoundSubpixelTexturePath
+		: TSAVLEDTools::Private::RectangleSubpixelTexturePath;
+	if (UTexture* SubpixelTexture = LoadObject<UTexture>(nullptr, SubpixelTexturePath))
+	{
+		DisplayMaterialInstance->SetTextureParameterValue(TEXT("SubpixelTexture"), SubpixelTexture);
+	}
 	if (UMediaTexture* Texture = GetMediaTexture())
 	{
 		DisplayMaterialInstance->SetTextureParameterValue(TEXT("MediaTexture"), Texture);

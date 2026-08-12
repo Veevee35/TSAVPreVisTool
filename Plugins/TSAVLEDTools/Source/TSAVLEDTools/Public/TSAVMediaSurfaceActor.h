@@ -16,6 +16,15 @@ class UMediaTexture;
 class USceneComponent;
 class UStaticMeshComponent;
 
+/** RGB emitter geometry repeated once per native LED pixel. */
+UENUM(BlueprintType)
+enum class ETSAVLEDSubpixelLayout : uint8
+{
+	None UMETA(DisplayName = "Off (Solid Video)"),
+	RectangleRGB UMETA(DisplayName = "Rectangle RGB"),
+	RoundRGB UMETA(DisplayName = "Round RGB"),
+};
+
 /**
  * Shared media playback and display surface used by the TSAV LED actors.
  *
@@ -58,6 +67,14 @@ public:
 	/** Brightness multiplier passed to the LED material. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Look", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
 	float EmissiveStrength = 3.0f;
+
+	/** Simulates the physical RGB emitters visible when an LED wall is viewed close-up. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Look")
+	ETSAVLEDSubpixelLayout SubpixelLayout = ETSAVLEDSubpixelLayout::None;
+
+	/** Strength of the physical subpixel mask. Zero shows solid video; one shows the full RGB layout. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Look", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", EditCondition = "SubpixelLayout != ETSAVLEDSubpixelLayout::None"))
+	float SubpixelStrength = 1.0f;
 
 	/** Resolution of the processor canvas carried by the assigned Media Source. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Canvas")

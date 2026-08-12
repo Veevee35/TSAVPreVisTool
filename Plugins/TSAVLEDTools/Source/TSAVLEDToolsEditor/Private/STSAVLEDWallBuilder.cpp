@@ -316,6 +316,64 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				[
 					SNew(SBorder).Padding(9.0f).BorderImage(FAppStyle::GetBrush(TEXT("Brushes.Header")))[SNew(STextBlock).Text(this, &STSAVLEDWallBuilder::GetWallSummary).Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))]
 				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)
+				[
+					SNew(STextBlock).Text(LOCTEXT("SubpixelLabel", "Subpixel layout (close-up LED realism)"))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 7.0f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth()
+					[
+						SNew(SCheckBox)
+						.Style(FAppStyle::Get(), TEXT("RadioButton"))
+						.IsChecked_Lambda([this]() { return SubpixelLayout == ETSAVLEDSubpixelLayout::None ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { if (State == ECheckBoxState::Checked) SubpixelLayout = ETSAVLEDSubpixelLayout::None; })
+						[SNew(STextBlock).Text(LOCTEXT("SubpixelOff", "Off"))]
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(18.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SCheckBox)
+						.Style(FAppStyle::Get(), TEXT("RadioButton"))
+						.IsChecked_Lambda([this]() { return SubpixelLayout == ETSAVLEDSubpixelLayout::RectangleRGB ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { if (State == ECheckBoxState::Checked) SubpixelLayout = ETSAVLEDSubpixelLayout::RectangleRGB; })
+						[SNew(STextBlock).Text(LOCTEXT("RectangleSubpixel", "Rectangle RGB"))]
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(18.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SCheckBox)
+						.Style(FAppStyle::Get(), TEXT("RadioButton"))
+						.IsChecked_Lambda([this]() { return SubpixelLayout == ETSAVLEDSubpixelLayout::RoundRGB ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { if (State == ECheckBoxState::Checked) SubpixelLayout = ETSAVLEDSubpixelLayout::RoundRGB; })
+						[SNew(STextBlock).Text(LOCTEXT("RoundSubpixel", "Round RGB"))]
+					]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 14.0f)
+				[
+					SNew(SHorizontalBox)
+					.IsEnabled_Lambda([this]() { return SubpixelLayout != ETSAVLEDSubpixelLayout::None; })
+					+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("SubpixelStrength", "Subpixel strength"))
+						.ToolTipText(LOCTEXT("SubpixelStrengthHelp", "Blend between solid video and the full physical RGB emitter pattern."))
+					]
+					+ SHorizontalBox::Slot().AutoWidth()
+					[
+						SNew(SBox).WidthOverride(150.0f)
+						[
+							SNew(SNumericEntryBox<float>)
+							.Value_Lambda([this]() { return TOptional<float>(SubpixelStrength * 100.0f); })
+							.MinValue(0.0f)
+							.MaxValue(100.0f)
+							.MinSliderValue(0.0f)
+							.MaxSliderValue(100.0f)
+							.AllowSpin(true)
+							.OnValueChanged_Lambda([this](float NewValue) { SubpixelStrength = FMath::Clamp(NewValue / 100.0f, 0.0f, 1.0f); })
+							.UndeterminedString(LOCTEXT("Percent", "%"))
+						]
+					]
+				]
 
 				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step3", "3"), LOCTEXT("CanvasTitle", "Canvas & NDI Source"), LOCTEXT("CanvasHelp", "Set the screen's top-left pixel on the processor canvas, then choose the NDI Media Source carrying that canvas."))]
 				+ SVerticalBox::Slot().AutoHeight()
@@ -481,6 +539,8 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 	bSerpentine = Wall->LinkPattern == ETSAVLEDLinkPattern::RowsSerpentine;
 	bShowSeams = Wall->bShowPanelSeams;
 	bPreviewInEditor = Wall->bPlayInEditor;
+	SubpixelLayout = Wall->SubpixelLayout;
+	SubpixelStrength = Wall->SubpixelStrength;
 	MediaSource = Wall->MediaSource.Get();
 	SetStatus(FText::Format(LOCTEXT("WallLoaded", "Loaded {0}. Change values and click Update Selected Wall."), FText::FromString(WallName)), true);
 	return FReply::Handled();
@@ -575,6 +635,8 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 	Wall.bUseCanvasMapping = true;
 	Wall.MediaSource = MediaSource.Get();
 	Wall.bPlayInEditor = bPreviewInEditor;
+	Wall.SubpixelLayout = SubpixelLayout;
+	Wall.SubpixelStrength = FMath::Clamp(SubpixelStrength, 0.0f, 1.0f);
 	Wall.bAutoPlay = true;
 	Wall.RerunConstructionScripts();
 	Wall.RefreshMedia();

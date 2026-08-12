@@ -4,6 +4,8 @@ Run from Unreal's Python console or with UnrealEditor-Cmd -ExecutePythonScript.
 The script is intentionally idempotent for the exact assets it owns.
 """
 
+import importlib.util
+import os
 import traceback
 
 import unreal
@@ -37,102 +39,11 @@ def _create_or_load_material(asset_path):
 
 
 def _build_video_material():
-    material = _create_or_load_material(VIDEO_MATERIAL)
-    material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
-
-    texture = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionTextureSampleParameter2D, -420, -40
-    )
-    texture.set_editor_property("parameter_name", "MediaTexture")
-    texture.set_editor_property(
-        "texture", unreal.EditorAssetLibrary.load_asset("/Engine/EngineResources/DefaultTexture")
-    )
-
-    texcoord = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionTextureCoordinate, -950, -120
-    )
-
-    scale_x = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionScalarParameter, -950, 40
-    )
-    scale_x.set_editor_property("parameter_name", "CanvasScaleX")
-    scale_x.set_editor_property("default_value", 1.0)
-
-    scale_y = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionScalarParameter, -950, 130
-    )
-    scale_y.set_editor_property("parameter_name", "CanvasScaleY")
-    scale_y.set_editor_property("default_value", 1.0)
-
-    scale = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionAppendVector, -690, 60
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(scale_x, "", scale, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(scale_y, "", scale, "B")
-
-    scaled_uv = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionMultiply, -480, -110
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(texcoord, "", scaled_uv, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(scale, "", scaled_uv, "B")
-
-    offset_x = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionScalarParameter, -950, 250
-    )
-    offset_x.set_editor_property("parameter_name", "CanvasOffsetX")
-    offset_x.set_editor_property("default_value", 0.0)
-
-    offset_y = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionScalarParameter, -950, 340
-    )
-    offset_y.set_editor_property("parameter_name", "CanvasOffsetY")
-    offset_y.set_editor_property("default_value", 0.0)
-
-    offset = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionAppendVector, -690, 280
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(offset_x, "", offset, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(offset_y, "", offset, "B")
-
-    mapped_uv = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionAdd, -260, -100
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(scaled_uv, "", mapped_uv, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(offset, "", mapped_uv, "B")
-    unreal.MaterialEditingLibrary.connect_material_expressions(mapped_uv, "", texture, "UVs")
-
-    strength = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionScalarParameter, -420, 150
-    )
-    strength.set_editor_property("parameter_name", "EmissiveStrength")
-    strength.set_editor_property("default_value", 3.0)
-
-    brightness_multiply = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionMultiply, -120, 20
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(texture, "RGB", brightness_multiply, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(strength, "", brightness_multiply, "B")
-
-    canvas_visible = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionScalarParameter, -120, 180
-    )
-    canvas_visible.set_editor_property("parameter_name", "CanvasVisible")
-    canvas_visible.set_editor_property("default_value", 1.0)
-
-    output_multiply = unreal.MaterialEditingLibrary.create_material_expression(
-        material, unreal.MaterialExpressionMultiply, 100, 30
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(
-        brightness_multiply, "", output_multiply, "A"
-    )
-    unreal.MaterialEditingLibrary.connect_material_expressions(
-        canvas_visible, "", output_multiply, "B"
-    )
-    unreal.MaterialEditingLibrary.connect_material_property(
-        output_multiply, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR
-    )
-    unreal.MaterialEditingLibrary.recompile_material(material)
-    unreal.EditorAssetLibrary.save_loaded_asset(material, only_if_is_dirty=False)
+    script_path = os.path.join(os.path.dirname(__file__), "update_led_subpixel_assets.py")
+    spec = importlib.util.spec_from_file_location("tsav_led_subpixel_assets", script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    material, _, _ = module.build_assets()
     return material
 
 

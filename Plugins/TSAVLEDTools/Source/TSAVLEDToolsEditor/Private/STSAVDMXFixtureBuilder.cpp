@@ -781,9 +781,9 @@ FReply STSAVDMXFixtureBuilder::LoadSelectedFixture()
 	{
 		Universe = Patch->GetUniverseID();
 		Address = Patch->GetStartingChannel();
-		const int32 ModeIndex = FMath::Clamp(Patch->GetActiveModeIndex(), 0, ModeOptions.Num() - 1);
-		if (ModeOptions.IsValidIndex(ModeIndex))
+		if (!ModeOptions.IsEmpty())
 		{
+			const int32 ModeIndex = FMath::Clamp(Patch->GetActiveModeIndex(), 0, ModeOptions.Num() - 1);
 			SelectedMode = ModeOptions[ModeIndex];
 			if (ModeCombo.IsValid()) ModeCombo->SetSelectedItem(SelectedMode);
 		}
