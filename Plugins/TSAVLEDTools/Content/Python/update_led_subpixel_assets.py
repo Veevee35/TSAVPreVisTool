@@ -82,19 +82,33 @@ def _scalar(material, name, default, x, y):
     return node
 
 
+def _connect(source, source_output, destination, destination_input):
+    """Connect two material nodes and stop instead of saving a broken graph."""
+    connected = unreal.MaterialEditingLibrary.connect_material_expressions(
+        source, source_output, destination, destination_input
+    )
+    if not connected:
+        source_name = source.get_class().get_name()
+        destination_name = destination.get_class().get_name()
+        raise RuntimeError(
+            f"Could not connect {source_name}.{source_output or '[0]'} to "
+            f"{destination_name}.{destination_input or '[0]'}"
+        )
+
+
 def _append(material, a, b, x, y):
     node = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionAppendVector, x, y
     )
-    unreal.MaterialEditingLibrary.connect_material_expressions(a, "", node, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(b, "", node, "B")
+    _connect(a, "", node, "A")
+    _connect(b, "", node, "B")
     return node
 
 
 def _binary(material, node_type, a, b, x, y):
     node = unreal.MaterialEditingLibrary.create_material_expression(material, node_type, x, y)
-    unreal.MaterialEditingLibrary.connect_material_expressions(a, "", node, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(b, "", node, "B")
+    _connect(a, "", node, "A")
+    _connect(b, "", node, "B")
     return node
 
 
@@ -128,7 +142,9 @@ def build_assets():
     pixel_floor = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionFloor, -970, -215
     )
-    unreal.MaterialEditingLibrary.connect_material_expressions(pixel_uv, "", pixel_floor, "Input")
+    # Unary input pin names are shortened differently across engine versions.
+    # An empty destination name is Unreal's documented way to select input 0.
+    _connect(pixel_uv, "", pixel_floor, "")
     half_pixel = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionConstant, -970, -80
     )
@@ -181,30 +197,28 @@ def build_assets():
     media.set_editor_property(
         "texture", unreal.EditorAssetLibrary.load_asset("/Engine/EngineResources/DefaultTexture")
     )
-    unreal.MaterialEditingLibrary.connect_material_expressions(mapped_uv, "", media, "UVs")
+    _connect(mapped_uv, "", media, "UVs")
 
     subpixels = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionTextureSampleParameter2D, -730, 500
     )
     subpixels.set_editor_property("parameter_name", "SubpixelTexture")
     subpixels.set_editor_property("texture", rectangle)
-    unreal.MaterialEditingLibrary.connect_material_expressions(pixel_uv, "", subpixels, "UVs")
+    _connect(pixel_uv, "", subpixels, "UVs")
 
     masked_video = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionMultiply, 220, 80
     )
-    unreal.MaterialEditingLibrary.connect_material_expressions(media, "RGB", masked_video, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(subpixels, "RGB", masked_video, "B")
+    _connect(media, "RGB", masked_video, "A")
+    _connect(subpixels, "RGB", masked_video, "B")
 
     subpixel_strength = _scalar(material, "SubpixelStrength", 0.0, -260, 400)
     layout_blend = unreal.MaterialEditingLibrary.create_material_expression(
         material, unreal.MaterialExpressionLinearInterpolate, 480, -15
     )
-    unreal.MaterialEditingLibrary.connect_material_expressions(media, "RGB", layout_blend, "A")
-    unreal.MaterialEditingLibrary.connect_material_expressions(masked_video, "", layout_blend, "B")
-    unreal.MaterialEditingLibrary.connect_material_expressions(
-        subpixel_strength, "", layout_blend, "Alpha"
-    )
+    _connect(media, "RGB", layout_blend, "A")
+    _connect(masked_video, "", layout_blend, "B")
+    _connect(subpixel_strength, "", layout_blend, "Alpha")
 
     emissive_strength = _scalar(material, "EmissiveStrength", 3.0, 220, 280)
     bright_video = _binary(
@@ -224,11 +238,15 @@ def build_assets():
         950,
         15,
     )
-    unreal.MaterialEditingLibrary.connect_material_property(
+    output_connected = unreal.MaterialEditingLibrary.connect_material_property(
         output, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR
     )
+    if not output_connected:
+        raise RuntimeError("Could not connect the LED shader to Emissive Color")
 
-    unreal.MaterialEditingLibrary.recompile_material(material)
+    compile_errors = unreal.MaterialEditingLibrary.recompile_material(material)
+    if compile_errors:
+        raise RuntimeError("LED material compile failed:\n" + "\n".join(compile_errors))
     unreal.EditorAssetLibrary.save_loaded_asset(material, only_if_is_dirty=False)
     unreal.log(
         "CODEX_LED_SUBPIXEL_SUCCESS "
