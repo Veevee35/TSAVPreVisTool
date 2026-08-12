@@ -13,6 +13,8 @@ public class TSAVLEDTools : ModuleRules
 			{
 				"Core",
 				"CoreUObject",
+				"DMXProtocol",
+				"DMXRuntime",
 				"Engine",
 				"MediaAssets",
 			}

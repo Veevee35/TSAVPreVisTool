@@ -16,5 +16,7 @@ public:
 private:
 	void RegisterMenus();
 	void OpenBuilderTab();
+	void OpenFixtureBuilderTab();
 	TSharedRef<SDockTab> SpawnBuilderTab(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnFixtureBuilderTab(const FSpawnTabArgs& Args);
 };

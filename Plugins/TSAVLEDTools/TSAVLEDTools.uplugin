@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "TSAV LED Tools",
-	"Description": "Reusable LED panel and LED wall-builder actors with Media Source and NDI playback support.",
+	"Description": "Reusable LED wall and DMX fixture builder tools for live-event previsualization.",
 	"Category": "TSAV Previs",
 	"CreatedBy": "TSAV",
 	"CanContainContent": true,
@@ -23,6 +23,10 @@
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "DMXEngine",
+			"Enabled": true
+		},
 		{
 			"Name": "NDIMedia",
 			"Enabled": true
