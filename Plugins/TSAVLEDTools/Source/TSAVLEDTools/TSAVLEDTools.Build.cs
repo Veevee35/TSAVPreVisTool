@@ -17,6 +17,7 @@ public class TSAVLEDTools : ModuleRules
 				"DMXRuntime",
 				"Engine",
 				"MediaAssets",
+				"ProceduralMeshComponent",
 			}
 		);
 	}

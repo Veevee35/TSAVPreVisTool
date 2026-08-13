@@ -17,7 +17,7 @@ For example, an 8×4 wall made from 128×128 cabinets has a native resolution of
 
 1. Restart Unreal Editor after the plugin is first compiled, then open **Tools > TSAV LED Wall Builder**.
 2. Pick a saved **TSAV LED Panel Definition**, or clear the picker and enter a panel's width, height, depth, and native X/Y pixels. Custom values can be saved as a new preset.
-3. Enter Columns and Rows. The tool calculates the cabinet count, wall size, total screen resolution, and pixel pitch. Choose **Off**, **Rectangle RGB**, or **Round RGB** under Subpixel Layout. Strength blends from solid video at 0% to the full emitter mask at 100%.
+3. Enter Columns and Rows. Set each column's bend from -15° to +15° in 0.5° steps. In the interactive grid, left-click a panel to cycle through square, four diagonal-corner, and four rounded-corner shapes; right-click to cycle backward. The generated actor bends and cuts the actual panel geometry while retaining the correct full-wall media UVs. The tool also calculates the cabinet count, wall size, total screen resolution, and pixel pitch. Choose **Off**, **Rectangle RGB**, or **Round RGB** under Subpixel Layout. Strength blends from solid video at 0% to the full emitter mask at 100%.
 4. Keep the processor canvas at 4096×2160 (or enter another size), then set the screen's top-left X/Y coordinate. The preview turns red and disables creation if the screen is outside the canvas.
 5. Pick an **NDI Media Source** in **NDI / Media Source** and enable editor preview when desired.
 6. Click **Create LED Wall** to place it in front of the active viewport. To edit an existing wall, select it, click **Load Selected Wall**, change the configuration, and click **Update Selected Wall**.
@@ -28,7 +28,7 @@ For example, an 8×4 wall made from 128×128 cabinets has a native resolution of
 2. Duplicate `DA_TSAV_500mm_128px` under the plugin's `PanelDefinitions` folder to add a cabinet model, then edit its size and native resolution.
 3. Select the center wall, assign the panel definition, and set Rows/Columns.
 4. Set **Canvas Resolution** (4096×2160 by default) and **Canvas Position**.
-5. Expand **Generated Panel Links** to inspect each cabinet's serpentine link number and exact canvas coordinate.
+5. Expand **Generated Panel Links** to inspect each cabinet's serpentine link number, exact canvas coordinate, column angle, and edge style.
 6. Assign an NDI Media Source, enable **Play in Editor**, and click **Refresh Media**; or press Play to open the feed automatically.
 
 The bundled display material repeats the selected RGB emitter layout once per native wall pixel, after the incoming canvas has been cropped and sampled at native resolution. **Rectangle RGB** uses vertical red/green/blue stripe emitters; **Round RGB** uses a triangular cluster of round emitters. At a distance, texture filtering blends them back into the image; close up, the individual emitters and black mask are visible. **Off** skips the mask for a conventional solid-video preview.
@@ -39,7 +39,7 @@ The material exposes `MediaTexture`, `EmissiveStrength`, `CanvasScaleX/Y`, `Canv
 
 1. Enable Unreal's DMX Engine and GDTF support, restart the editor, then open **Tools > TSAV GDTF DMX Fixture Builder**.
 2. Choose the `.gdtf` file and select its operating mode.
-3. If the GDTF contains glTF/GLB resources, confirm the automatically imported Base, Yoke, Head, and Lens assignments. Otherwise import a fixture model (`.fbx`, `.obj`, `.gltf`, or `.glb`) manually. A single imported mesh can be used for a static fixture; separate meshes are recommended for moving heads. Legacy 3DS-only GDTFs require conversion to glTF/GLB first.
+3. If the GDTF contains glTF/GLB resources, confirm the automatically imported Base, Yoke, Head, and Lens assignments. Each embedded part is scaled to the dimensions declared by the GDTF and assembled from its geometry transforms. Otherwise import a fixture model (`.fbx`, `.obj`, `.gltf`, or `.glb`) manually. A single imported mesh can be used for a static fixture; separate meshes are recommended for moving heads. Legacy 3DS-only GDTFs require conversion to glTF/GLB first.
 4. Review the GDTF-derived pivot positions, motion limits/speeds, lens transform, beam direction, zoom range, and maximum intensity; adjust them only when the source data needs correction.
 5. Set the DMX universe and address, then click **Create Fixture**. The tool creates the DMX Library, Fixture Type, Fixture Patch, and linked actor.
 6. Use the preview controls to check pan/tilt and beam alignment. Select the fixture later and click **Load Selected Fixture** to adjust or repatch it.

@@ -58,6 +58,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
 	FRotator ModelRotation = FRotator::ZeroRotator;
 
+	/** Per-part scales derived from the authoritative dimensions in the GDTF model table. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
+	FVector BaseMeshScale = FVector::OneVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
+	FVector YokeMeshScale = FVector::OneVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
+	FVector HeadMeshScale = FVector::OneVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
+	FVector LensMeshScale = FVector::OneVector;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
 	FVector BaseMeshOffset = FVector::ZeroVector;
 
@@ -74,6 +87,14 @@ public:
 	/** Position of the tilt/head pivot relative to the pan pivot, in centimeters. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Motion")
 	FVector TiltPivotOffset = FVector::ZeroVector;
+
+	/** Rest orientation of the GDTF pan geometry before DMX motion is applied. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Motion")
+	FRotator PanPivotRotation = FRotator::ZeroRotator;
+
+	/** Rest orientation of the GDTF tilt geometry before DMX motion is applied. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Motion")
+	FRotator TiltPivotRotation = FRotator::ZeroRotator;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Motion")
 	float PanMinDegrees = -270.0f;

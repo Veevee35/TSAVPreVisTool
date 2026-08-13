@@ -58,8 +58,14 @@ private:
 	FString FixtureName = TEXT("Moving Head");
 	float FixtureScale = 1.0f;
 	FRotator ModelRotation = FRotator::ZeroRotator;
+	FVector BaseMeshScale = FVector::OneVector;
+	FVector YokeMeshScale = FVector::OneVector;
+	FVector HeadMeshScale = FVector::OneVector;
+	FVector LensMeshScale = FVector::OneVector;
 	FVector PanPivotOffset = FVector::ZeroVector;
 	FVector TiltPivotOffset = FVector(0.0f, 0.0f, 40.0f);
+	FRotator PanPivotRotation = FRotator::ZeroRotator;
+	FRotator TiltPivotRotation = FRotator::ZeroRotator;
 	FVector LensOffset = FVector(20.0f, 0.0f, 0.0f);
 	FRotator LensMeshRotation = FRotator::ZeroRotator;
 	FRotator BeamRotation = FRotator::ZeroRotator;

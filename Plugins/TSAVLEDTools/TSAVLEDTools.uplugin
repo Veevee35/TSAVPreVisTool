@@ -30,6 +30,10 @@
 		{
 			"Name": "NDIMedia",
 			"Enabled": true
+		},
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
 		}
 	]
 }

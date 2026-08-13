@@ -189,6 +189,38 @@ namespace TSAVDMXFixtureBuilder::Private
 		return MAX_int32;
 	}
 
+	FTransform ConvertParsedGDTFTransformForImportedGLTF(const FTransform& ParsedTransform)
+	{
+		// Unreal's GDTF parser and glTF Interchange importer each swap Y/Z independently.
+		// Undo the parser's swap so geometry transforms use the same XYZ frame as the
+		// imported mesh: GDTF X/Y/Z maps to the imported mesh's Unreal X/Y/Z.
+		const FMatrix AxisSwap(
+			FPlane(1.0, 0.0, 0.0, 0.0),
+			FPlane(0.0, 0.0, 1.0, 0.0),
+			FPlane(0.0, 1.0, 0.0, 0.0),
+			FPlane(0.0, 0.0, 0.0, 1.0));
+		return FTransform(AxisSwap * ParsedTransform.ToMatrixWithScale() * AxisSwap);
+	}
+
+	FVector GetImportedMeshScale(const UStaticMesh& Mesh, const UE::DMX::GDTF::FDMXGDTFModel& Model)
+	{
+		// GDTF model dimensions are authoritative even when the embedded GLB was
+		// exported in millimeters or with another authoring scale.
+		const FVector ImportedSize = Mesh.GetBoundingBox().GetSize();
+		const FVector DeclaredSize(Model.Length, Model.Width, Model.Height);
+		constexpr float MetersToCentimeters = 100.0f;
+		if (ImportedSize.X <= UE_SMALL_NUMBER || ImportedSize.Y <= UE_SMALL_NUMBER || ImportedSize.Z <= UE_SMALL_NUMBER ||
+			DeclaredSize.X <= UE_SMALL_NUMBER || DeclaredSize.Y <= UE_SMALL_NUMBER || DeclaredSize.Z <= UE_SMALL_NUMBER)
+		{
+			return FVector::OneVector;
+		}
+
+		return FVector(
+			DeclaredSize.X * MetersToCentimeters / ImportedSize.X,
+			DeclaredSize.Y * MetersToCentimeters / ImportedSize.Y,
+			DeclaredSize.Z * MetersToCentimeters / ImportedSize.Z);
+	}
+
 	TSharedPtr<UE::DMX::GDTF::FDMXGDTFBeamGeometry> FindFirstBeamGeometry(const TSharedPtr<UE::DMX::GDTF::FDMXGDTFGeometry>& Geometry)
 	{
 		using namespace UE::DMX::GDTF;
@@ -461,20 +493,26 @@ void STSAVDMXFixtureBuilder::Construct(const FArguments& InArgs)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 14.0f)[SNew(STextBlock).Text(this, &STSAVDMXFixtureBuilder::GetModeSummary).AutoWrapText(true).ColorAndOpacity(FSlateColor::UseSubduedForeground())]
 
-				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step2", "2"), LOCTEXT("ModelTitle", "3D Model"), LOCTEXT("ModelHelp", "Embedded GDTF glTF/GLB models are assigned automatically. Use manual import only as a fallback. Separate Base, Yoke, Head, and Lens meshes provide accurate articulation."))]
+				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step2", "2"), LOCTEXT("ModelTitle", "3D Model"), LOCTEXT("ModelHelp", "Embedded GDTF glTF/GLB models are assigned and scaled to their declared dimensions automatically. Use manual import only as a fallback. Separate Base, Yoke, Head, and Lens meshes provide accurate articulation."))]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f)[SNew(SButton).Text(LOCTEXT("ImportModel", "Import 3D Model…")).HAlign(HAlign_Center).OnClicked(this, &STSAVDMXFixtureBuilder::ImportModel)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("BaseMesh", "Base"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return BaseMesh.IsValid()?BaseMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnBaseMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("YokeMesh", "Yoke"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return YokeMesh.IsValid()?YokeMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnYokeMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("HeadMesh", "Head / full model"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return HeadMesh.IsValid()?HeadMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnHeadMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("LensMesh", "Lens / beam"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return LensMesh.IsValid()?LensMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnLensMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f)[MakeFloatField(LOCTEXT("Scale", "Fixture scale"), &FixtureScale, 0.001f, 100.0f)]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 14.0f)[MakeRotationField(LOCTEXT("ModelRotation", "Model axis correction"), &ModelRotation)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[MakeRotationField(LOCTEXT("ModelRotation", "Model axis correction"), &ModelRotation)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[MakeVectorField(LOCTEXT("BaseMeshScale", "Base GDTF scale"), &BaseMeshScale)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[MakeVectorField(LOCTEXT("YokeMeshScale", "Yoke GDTF scale"), &YokeMeshScale)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[MakeVectorField(LOCTEXT("HeadMeshScale", "Head GDTF scale"), &HeadMeshScale)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 14.0f)[MakeVectorField(LOCTEXT("LensMeshScale", "Lens GDTF scale"), &LensMeshScale)]
 
 				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step3", "3"), LOCTEXT("MotionTitle", "Pan, Tilt & Pivots"), LOCTEXT("MotionHelp", "Set the real motion limits, home offsets, direction, speed, and the pivot positions used by the imported model."))]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f)[SNew(SGridPanel).FillColumn(0,1.0f).FillColumn(1,1.0f)+SGridPanel::Slot(0,0).Padding(0.0f,3.0f,8.0f,3.0f)[MakeSignedFloatField(LOCTEXT("PanMin","Pan minimum °"),&PanMin)]+SGridPanel::Slot(1,0).Padding(8.0f,3.0f,0.0f,3.0f)[MakeSignedFloatField(LOCTEXT("PanMax","Pan maximum °"),&PanMax)]+SGridPanel::Slot(0,1).Padding(0.0f,3.0f,8.0f,3.0f)[MakeSignedFloatField(LOCTEXT("TiltMin","Tilt minimum °"),&TiltMin)]+SGridPanel::Slot(1,1).Padding(8.0f,3.0f,0.0f,3.0f)[MakeSignedFloatField(LOCTEXT("TiltMax","Tilt maximum °"),&TiltMax)]+SGridPanel::Slot(0,2).Padding(0.0f,3.0f,8.0f,3.0f)[MakeSignedFloatField(LOCTEXT("PanOffset","Pan home offset °"),&PanOffset)]+SGridPanel::Slot(1,2).Padding(8.0f,3.0f,0.0f,3.0f)[MakeSignedFloatField(LOCTEXT("TiltOffset","Tilt home offset °"),&TiltOffset)]+SGridPanel::Slot(0,3).Padding(0.0f,3.0f,8.0f,3.0f)[MakeFloatField(LOCTEXT("PanSpeed","Pan speed °/s"),&PanSpeed,0.0f,10000.0f)]+SGridPanel::Slot(1,3).Padding(8.0f,3.0f,0.0f,3.0f)[MakeFloatField(LOCTEXT("TiltSpeed","Tilt speed °/s"),&TiltSpeed,0.0f,10000.0f)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth()[SNew(SCheckBox).IsChecked_Lambda([this](){return bInvertPan?ECheckBoxState::Checked:ECheckBoxState::Unchecked;}).OnCheckStateChanged_Lambda([this](ECheckBoxState State){bInvertPan=State==ECheckBoxState::Checked;})[SNew(STextBlock).Text(LOCTEXT("InvertPan","Invert pan"))]]+SHorizontalBox::Slot().AutoWidth().Padding(24.0f,0.0f)[SNew(SCheckBox).IsChecked_Lambda([this](){return bInvertTilt?ECheckBoxState::Checked:ECheckBoxState::Unchecked;}).OnCheckStateChanged_Lambda([this](ECheckBoxState State){bInvertTilt=State==ECheckBoxState::Checked;})[SNew(STextBlock).Text(LOCTEXT("InvertTilt","Invert tilt"))]]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f)[MakeVectorField(LOCTEXT("PanPivot", "Pan pivot offset (cm)"), &PanPivotOffset)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f)[MakeVectorField(LOCTEXT("TiltPivot", "Tilt pivot offset (cm)"), &TiltPivotOffset)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f)[MakeRotationField(LOCTEXT("PanPivotRotation", "Pan pivot rest rotation"), &PanPivotRotation)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f)[MakeRotationField(LOCTEXT("TiltPivotRotation", "Tilt pivot rest rotation"), &TiltPivotRotation)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f, 0.0f, 14.0f)[SNew(SGridPanel).FillColumn(0,1.0f).FillColumn(1,1.0f)+SGridPanel::Slot(0,0).Padding(0.0f,3.0f,8.0f,3.0f)[MakeFloatField(LOCTEXT("PreviewPan","Preview pan (0–1)"),&PreviewPan,0.0f,1.0f)]+SGridPanel::Slot(1,0).Padding(8.0f,3.0f,0.0f,3.0f)[MakeFloatField(LOCTEXT("PreviewTilt","Preview tilt (0–1)"),&PreviewTilt,0.0f,1.0f)]]
 
 				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step4", "4"), LOCTEXT("BeamTitle", "Beam & DMX Patch"), LOCTEXT("BeamHelp", "Position the lens, set beam output, and choose the local universe and starting address. Dimmer, RGB, Zoom, Pan, and Tilt attributes are detected from GDTF."))]
@@ -630,6 +668,16 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 		OutResultMessage = LOCTEXT("InvalidEmbeddedModelDescription", "The GDTF description is invalid, so its model could not be matched to fixture parts.");
 		return -1;
 	}
+
+	// Never carry assignments or per-model scale from the previously selected GDTF.
+	BaseMesh.Reset();
+	YokeMesh.Reset();
+	HeadMesh.Reset();
+	LensMesh.Reset();
+	BaseMeshScale = FVector::OneVector;
+	YokeMeshScale = FVector::OneVector;
+	HeadMeshScale = FVector::OneVector;
+	LensMeshScale = FVector::OneVector;
 
 	const FString GltfPrefix = TEXT("models/gltf/");
 	TMap<FString, FString> BestArchiveByRelativeStem;
@@ -815,6 +863,10 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 	UStaticMesh* ImportedYoke = nullptr;
 	UStaticMesh* ImportedHead = nullptr;
 	UStaticMesh* ImportedLens = nullptr;
+	FVector ImportedBaseScale = FVector::OneVector;
+	FVector ImportedYokeScale = FVector::OneVector;
+	FVector ImportedHeadScale = FVector::OneVector;
+	FVector ImportedLensScale = FVector::OneVector;
 	int32 ImportedBasePriority = MAX_int32;
 	int32 ImportedYokePriority = MAX_int32;
 	int32 ImportedHeadPriority = MAX_int32;
@@ -823,18 +875,13 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 	TSet<UStaticMesh*> AssignedMeshes;
 	auto GetRoleForModel = [&RoleByModelName](const FDMXGDTFModel& Model)
 	{
-		const EFixtureMeshRole NamedRole = GetMeshRole(Model);
-		if (NamedRole != EFixtureMeshRole::None)
-		{
-			return NamedRole;
-		}
 		if (const EFixtureMeshRole* GeometryRole = RoleByModelName.Find(Model.Name))
 		{
 			return *GeometryRole;
 		}
-		return EFixtureMeshRole::None;
+		return GetMeshRole(Model);
 	};
-	auto AssignMesh = [&ImportedBase, &ImportedYoke, &ImportedHead, &ImportedLens, &ImportedBasePriority, &ImportedYokePriority, &ImportedHeadPriority, &ImportedLensPriority, &AssignedMeshes](UStaticMesh* Mesh, EFixtureMeshRole Role)
+	auto AssignMesh = [&ImportedBase, &ImportedYoke, &ImportedHead, &ImportedLens, &ImportedBaseScale, &ImportedYokeScale, &ImportedHeadScale, &ImportedLensScale, &ImportedBasePriority, &ImportedYokePriority, &ImportedHeadPriority, &ImportedLensPriority, &AssignedMeshes](UStaticMesh* Mesh, EFixtureMeshRole Role, const FDMXGDTFModel* Model)
 	{
 		if (!Mesh)
 		{
@@ -842,20 +889,22 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 		}
 
 		UStaticMesh** Destination = nullptr;
+		FVector* DestinationScale = nullptr;
 		int32* DestinationPriority = nullptr;
 		switch (Role)
 		{
-		case EFixtureMeshRole::Base: Destination = &ImportedBase; DestinationPriority = &ImportedBasePriority; break;
-		case EFixtureMeshRole::Yoke: Destination = &ImportedYoke; DestinationPriority = &ImportedYokePriority; break;
-		case EFixtureMeshRole::Head: Destination = &ImportedHead; DestinationPriority = &ImportedHeadPriority; break;
-		case EFixtureMeshRole::Lens: Destination = &ImportedLens; DestinationPriority = &ImportedLensPriority; break;
+		case EFixtureMeshRole::Base: Destination = &ImportedBase; DestinationScale = &ImportedBaseScale; DestinationPriority = &ImportedBasePriority; break;
+		case EFixtureMeshRole::Yoke: Destination = &ImportedYoke; DestinationScale = &ImportedYokeScale; DestinationPriority = &ImportedYokePriority; break;
+		case EFixtureMeshRole::Head: Destination = &ImportedHead; DestinationScale = &ImportedHeadScale; DestinationPriority = &ImportedHeadPriority; break;
+		case EFixtureMeshRole::Lens: Destination = &ImportedLens; DestinationScale = &ImportedLensScale; DestinationPriority = &ImportedLensPriority; break;
 		default: break;
 		}
 		const int32 Priority = GetMeshRolePriority(*Mesh, Role);
-		if (Destination && DestinationPriority && (!*Destination || Priority < *DestinationPriority))
+		if (Destination && DestinationScale && DestinationPriority && (!*Destination || Priority < *DestinationPriority))
 		{
 			AssignedMeshes.Remove(*Destination);
 			*Destination = Mesh;
+			*DestinationScale = Model ? GetImportedMeshScale(*Mesh, *Model) : FVector::OneVector;
 			*DestinationPriority = Priority;
 			AssignedMeshes.Add(Mesh);
 		}
@@ -878,15 +927,17 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 		for (int32 MeshIndex = 0; MeshIndex < TaskMeshes.Num(); ++MeshIndex)
 		{
 			UStaticMesh* Mesh = TaskMeshes[MeshIndex];
-			EFixtureMeshRole Role = GetMeshRole(*Mesh);
+			EFixtureMeshRole Role = EFixtureMeshRole::None;
+			const FDMXGDTFModel* MatchedModel = nullptr;
 
-			if (Role == EFixtureMeshRole::None && LinkedModels)
+			if (LinkedModels)
 			{
 				const FString MeshName = Canonicalize(Mesh->GetName());
 				for (const TSharedPtr<FDMXGDTFModel>& Model : *LinkedModels)
 				{
 					if (Model.IsValid() && MeshName.Contains(Canonicalize(Model->Name.ToString())))
 					{
+						MatchedModel = Model.Get();
 						Role = GetRoleForModel(*Model);
 						if (Role != EFixtureMeshRole::None)
 						{
@@ -898,12 +949,14 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 
 			if (Role == EFixtureMeshRole::None && LinkedModels && TaskMeshes.Num() == LinkedModels->Num() && LinkedModels->IsValidIndex(MeshIndex) && (*LinkedModels)[MeshIndex].IsValid())
 			{
+				MatchedModel = (*LinkedModels)[MeshIndex].Get();
 				Role = GetRoleForModel(*(*LinkedModels)[MeshIndex]);
 			}
 
 			if (Role == EFixtureMeshRole::None && LinkedModels && TaskMeshes.Num() == 1)
 			{
 				EFixtureMeshRole OnlyRole = EFixtureMeshRole::None;
+				const FDMXGDTFModel* OnlyModel = nullptr;
 				bool bAmbiguousRole = false;
 				for (const TSharedPtr<FDMXGDTFModel>& Model : *LinkedModels)
 				{
@@ -918,14 +971,32 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 						break;
 					}
 					OnlyRole = CandidateRole;
+					OnlyModel = Model.Get();
 				}
 				if (!bAmbiguousRole)
 				{
 					Role = OnlyRole;
+					MatchedModel = OnlyModel;
 				}
 			}
 
-			AssignMesh(Mesh, Role);
+			if (Role == EFixtureMeshRole::None)
+			{
+				Role = GetMeshRole(*Mesh);
+			}
+			if (!MatchedModel && LinkedModels)
+			{
+				for (const TSharedPtr<FDMXGDTFModel>& Model : *LinkedModels)
+				{
+					if (Model.IsValid() && GetRoleForModel(*Model) == Role)
+					{
+						MatchedModel = Model.Get();
+						break;
+					}
+				}
+			}
+
+			AssignMesh(Mesh, Role, MatchedModel);
 		}
 	}
 
@@ -955,6 +1026,10 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 	YokeMesh = ImportedYoke;
 	HeadMesh = ImportedHead;
 	LensMesh = ImportedLens;
+	BaseMeshScale = ImportedBaseScale;
+	YokeMeshScale = ImportedYokeScale;
+	HeadMeshScale = ImportedHeadScale;
+	LensMeshScale = ImportedLensScale;
 	OutResultMessage = FText::Format(
 		LOCTEXT("EmbeddedModelImported", "Imported {0} embedded Static Mesh asset(s) and assigned the physical fixture parts automatically."),
 		FText::AsNumber(AllImportedMeshes.Num()));
@@ -973,10 +1048,10 @@ void STSAVDMXFixtureBuilder::OnGDTFChanged(const FAssetData& AssetData)
 	}
 }
 
-void STSAVDMXFixtureBuilder::OnBaseMeshChanged(const FAssetData& AssetData) { BaseMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
-void STSAVDMXFixtureBuilder::OnYokeMeshChanged(const FAssetData& AssetData) { YokeMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
-void STSAVDMXFixtureBuilder::OnHeadMeshChanged(const FAssetData& AssetData) { HeadMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
-void STSAVDMXFixtureBuilder::OnLensMeshChanged(const FAssetData& AssetData) { LensMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
+void STSAVDMXFixtureBuilder::OnBaseMeshChanged(const FAssetData& AssetData) { BaseMesh = Cast<UStaticMesh>(AssetData.GetAsset()); BaseMeshScale = FVector::OneVector; }
+void STSAVDMXFixtureBuilder::OnYokeMeshChanged(const FAssetData& AssetData) { YokeMesh = Cast<UStaticMesh>(AssetData.GetAsset()); YokeMeshScale = FVector::OneVector; }
+void STSAVDMXFixtureBuilder::OnHeadMeshChanged(const FAssetData& AssetData) { HeadMesh = Cast<UStaticMesh>(AssetData.GetAsset()); HeadMeshScale = FVector::OneVector; }
+void STSAVDMXFixtureBuilder::OnLensMeshChanged(const FAssetData& AssetData) { LensMesh = Cast<UStaticMesh>(AssetData.GetAsset()); LensMeshScale = FVector::OneVector; }
 
 void STSAVDMXFixtureBuilder::RefreshGDTFModes(bool bAdoptPhysicalMotion)
 {
@@ -1049,19 +1124,24 @@ void STSAVDMXFixtureBuilder::AdoptSelectedModePhysicalProperties()
 	constexpr float MetersToCentimeters = 100.0f;
 	if (PanGeometry.IsValid())
 	{
-		PanPivotOffset = PanGeometry->Position.GetTranslation() * MetersToCentimeters;
+		const FTransform PanTransform = TSAVDMXFixtureBuilder::Private::ConvertParsedGDTFTransformForImportedGLTF(PanGeometry->Position);
+		PanPivotOffset = PanTransform.GetTranslation() * MetersToCentimeters;
+		PanPivotRotation = PanTransform.GetRotation().Rotator();
 	}
 	if (TiltGeometry.IsValid())
 	{
-		TiltPivotOffset = TiltGeometry->Position.GetTranslation() * MetersToCentimeters;
+		const FTransform TiltTransform = TSAVDMXFixtureBuilder::Private::ConvertParsedGDTFTransformForImportedGLTF(TiltGeometry->Position);
+		TiltPivotOffset = TiltTransform.GetTranslation() * MetersToCentimeters;
+		TiltPivotRotation = TiltTransform.GetRotation().Rotator();
 	}
 
 	const TSharedPtr<UE::DMX::GDTF::FDMXGDTFBeamGeometry> BeamGeometry = TSAVDMXFixtureBuilder::Private::FindFirstBeamGeometry(GDTFMode->ResolveGeometry());
 	if (BeamGeometry.IsValid())
 	{
-		LensOffset = BeamGeometry->Position.GetTranslation() * MetersToCentimeters;
-		LensMeshRotation = BeamGeometry->Position.GetRotation().Rotator();
-		const FVector BeamDirection = BeamGeometry->Position.GetRotation().RotateVector(FVector(0.0f, -1.0f, 0.0f));
+		const FTransform BeamTransform = TSAVDMXFixtureBuilder::Private::ConvertParsedGDTFTransformForImportedGLTF(BeamGeometry->Position);
+		LensOffset = BeamTransform.GetTranslation() * MetersToCentimeters;
+		LensMeshRotation = BeamTransform.GetRotation().Rotator();
+		const FVector BeamDirection = BeamTransform.GetRotation().RotateVector(FVector(0.0f, -1.0f, 0.0f));
 		if (!BeamDirection.IsNearlyZero())
 		{
 			BeamRotation = FRotationMatrix::MakeFromX(BeamDirection).Rotator();
@@ -1276,8 +1356,14 @@ void STSAVDMXFixtureBuilder::ApplySettings(ATSAVDMXFixture& Fixture, UDMXEntityF
 	Fixture.LensMesh = LensMesh.Get();
 	Fixture.FixtureScale = FMath::Max(FixtureScale, 0.001f);
 	Fixture.ModelRotation = ModelRotation;
+	Fixture.BaseMeshScale = BaseMeshScale;
+	Fixture.YokeMeshScale = YokeMeshScale;
+	Fixture.HeadMeshScale = HeadMeshScale;
+	Fixture.LensMeshScale = LensMeshScale;
 	Fixture.PanPivotOffset = PanPivotOffset;
 	Fixture.TiltPivotOffset = TiltPivotOffset;
+	Fixture.PanPivotRotation = PanPivotRotation;
+	Fixture.TiltPivotRotation = TiltPivotRotation;
 	Fixture.LensOffset = LensOffset;
 	Fixture.LensMeshRotation = LensMeshRotation;
 	Fixture.BeamRotation = BeamRotation;
@@ -1409,8 +1495,14 @@ FReply STSAVDMXFixtureBuilder::LoadSelectedFixture()
 	LensMesh = Fixture->LensMesh;
 	FixtureScale = Fixture->FixtureScale;
 	ModelRotation = Fixture->ModelRotation;
+	BaseMeshScale = Fixture->BaseMeshScale;
+	YokeMeshScale = Fixture->YokeMeshScale;
+	HeadMeshScale = Fixture->HeadMeshScale;
+	LensMeshScale = Fixture->LensMeshScale;
 	PanPivotOffset = Fixture->PanPivotOffset;
 	TiltPivotOffset = Fixture->TiltPivotOffset;
+	PanPivotRotation = Fixture->PanPivotRotation;
+	TiltPivotRotation = Fixture->TiltPivotRotation;
 	LensOffset = Fixture->LensOffset;
 	LensMeshRotation = Fixture->LensMeshRotation;
 	BeamRotation = Fixture->BeamRotation;

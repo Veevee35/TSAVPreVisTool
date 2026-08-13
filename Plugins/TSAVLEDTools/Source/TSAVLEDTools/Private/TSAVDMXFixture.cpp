@@ -161,6 +161,10 @@ void ATSAVDMXFixture::ApplyModelSetup()
 	YokeVisual->SetStaticMesh(YokeMesh);
 	HeadVisual->SetStaticMesh(HeadMesh);
 	LensVisual->SetStaticMesh(LensMesh);
+	BaseVisual->SetRelativeScale3D(BaseMeshScale);
+	YokeVisual->SetRelativeScale3D(YokeMeshScale);
+	HeadVisual->SetRelativeScale3D(HeadMeshScale);
+	LensVisual->SetRelativeScale3D(LensMeshScale);
 	BaseVisual->SetRelativeLocation(BaseMeshOffset);
 	YokeVisual->SetRelativeLocation(YokeMeshOffset);
 	HeadVisual->SetRelativeLocation(HeadMeshOffset);
@@ -187,8 +191,10 @@ void ATSAVDMXFixture::ApplyMotionAndBeam(float DeltaSeconds, bool bSnap)
 		? TargetTiltDegrees
 		: FMath::FInterpConstantTo(CurrentTiltDegrees, TargetTiltDegrees, DeltaSeconds, TiltSpeedDegreesPerSecond);
 
-	PanPivot->SetRelativeRotation(FRotator(0.0f, CurrentPanDegrees, 0.0f));
-	TiltPivot->SetRelativeRotation(FRotator(CurrentTiltDegrees, 0.0f, 0.0f));
+	const FQuat PanMotion(FVector::UpVector, FMath::DegreesToRadians(CurrentPanDegrees));
+	const FQuat TiltMotion(FVector::ForwardVector, FMath::DegreesToRadians(CurrentTiltDegrees));
+	PanPivot->SetRelativeRotation(PanPivotRotation.Quaternion() * PanMotion);
+	TiltPivot->SetRelativeRotation(TiltPivotRotation.Quaternion() * TiltMotion);
 
 	const float NarrowAngle = FMath::Clamp(MinimumBeamAngleDegrees, 1.0f, 89.0f);
 	const float WideAngle = FMath::Clamp(FMath::Max(MaximumBeamAngleDegrees, NarrowAngle), 1.0f, 89.0f);

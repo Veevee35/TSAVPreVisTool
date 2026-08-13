@@ -135,6 +135,9 @@ protected:
 
 	UMaterialInterface* ResolveFrameMaterial() const;
 
+	/** Lets derived surfaces reuse the dynamic media material on generated geometry. */
+	virtual void OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial);
+
 	virtual FIntPoint GetNativePixelResolution() const PURE_VIRTUAL(ATSAVMediaSurfaceActor::GetNativePixelResolution, return FIntPoint(1, 1););
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TSAV LED|Components")

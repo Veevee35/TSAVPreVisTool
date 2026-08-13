@@ -4,10 +4,190 @@
 
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/CollisionProfile.h"
+#include "Materials/MaterialInterface.h"
+#include "ProceduralMeshComponent.h"
 #include "TSAVLEDPanelDefinition.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVLEDWall)
+
+namespace TSAVLEDWall::Private
+{
+	constexpr float EdgeCutFraction = 0.28f;
+	constexpr int32 RoundCornerSegments = 6;
+
+	struct FMeshBuffers
+	{
+		TArray<FVector> Vertices;
+		TArray<int32> Triangles;
+		TArray<FVector> Normals;
+		TArray<FVector2D> UVs;
+		TArray<FLinearColor> Colors;
+		TArray<FProcMeshTangent> Tangents;
+
+		int32 AddVertex(const FVector& Position, const FVector& Normal, const FVector2D& UV, const FVector& Tangent)
+		{
+			const int32 Index = Vertices.Add(Position);
+			Normals.Add(Normal);
+			UVs.Add(UV);
+			Colors.Add(FLinearColor::White);
+			Tangents.Emplace(Tangent, false);
+			return Index;
+		}
+
+		void AddTriangle(int32 A, int32 B, int32 C)
+		{
+			Triangles.Append({A, B, C});
+		}
+	};
+
+	float SanitizeAngle(float Angle)
+	{
+		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -15.0f, 15.0f);
+	}
+
+	void AddArc(TArray<FVector2D>& Points, const FVector2D& Center, float StartDegrees, float EndDegrees, bool bIncludeEnd)
+	{
+		const int32 LastStep = bIncludeEnd ? RoundCornerSegments : RoundCornerSegments - 1;
+		for (int32 Step = 1; Step <= LastStep; ++Step)
+		{
+			const float Alpha = static_cast<float>(Step) / RoundCornerSegments;
+			const float Angle = FMath::DegreesToRadians(FMath::Lerp(StartDegrees, EndDegrees, Alpha));
+			Points.Emplace(Center.X + EdgeCutFraction * FMath::Cos(Angle), Center.Y + EdgeCutFraction * FMath::Sin(Angle));
+		}
+	}
+
+	TArray<FVector2D> MakePanelPolygon(ETSAVLEDPanelEdgeStyle Style)
+	{
+		const float Cut = EdgeCutFraction;
+		TArray<FVector2D> Points;
+		switch (Style)
+		{
+		case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft:
+			return {{Cut, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, Cut}};
+		case ETSAVLEDPanelEdgeStyle::DiagonalTopRight:
+			return {{0.0f, 0.0f}, {1.0f - Cut, 0.0f}, {1.0f, Cut}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+		case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft:
+			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {Cut, 1.0f}, {0.0f, 1.0f - Cut}};
+		case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight:
+			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f - Cut}, {1.0f - Cut, 1.0f}, {0.0f, 1.0f}};
+		case ETSAVLEDPanelEdgeStyle::RoundTopLeft:
+			Points = {{Cut, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, Cut}};
+			AddArc(Points, FVector2D(Cut, Cut), 180.0f, 270.0f, false);
+			return Points;
+		case ETSAVLEDPanelEdgeStyle::RoundTopRight:
+			Points = {{0.0f, 0.0f}, {1.0f - Cut, 0.0f}};
+			AddArc(Points, FVector2D(1.0f - Cut, Cut), -90.0f, 0.0f, true);
+			Points.Append({{1.0f, 1.0f}, {0.0f, 1.0f}});
+			return Points;
+		case ETSAVLEDPanelEdgeStyle::RoundBottomLeft:
+			Points = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {Cut, 1.0f}};
+			AddArc(Points, FVector2D(Cut, 1.0f - Cut), 90.0f, 180.0f, true);
+			return Points;
+		case ETSAVLEDPanelEdgeStyle::RoundBottomRight:
+			Points = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f - Cut}};
+			AddArc(Points, FVector2D(1.0f - Cut, 1.0f - Cut), 0.0f, 90.0f, true);
+			Points.Add(FVector2D(0.0f, 1.0f));
+			return Points;
+		default:
+			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+		}
+	}
+
+	FVector ToWorldPoint(
+		const FVector2D& Point,
+		const FVector& Center,
+		const FVector& Normal,
+		const FVector& Horizontal,
+		float Width,
+		float Height,
+		float DepthOffset)
+	{
+		return Center + Normal * DepthOffset + Horizontal * ((Point.X - 0.5f) * Width) + FVector::UpVector * ((0.5f - Point.Y) * Height);
+	}
+
+	void AppendFrontFace(
+		FMeshBuffers& Mesh,
+		const TArray<FVector2D>& Polygon,
+		const FVector& Center,
+		const FVector& Normal,
+		const FVector& Horizontal,
+		float Width,
+		float Height,
+		float FrontDepth,
+		int32 Column,
+		int32 Row,
+		int32 Columns,
+		int32 Rows)
+	{
+		const int32 BaseIndex = Mesh.Vertices.Num();
+		for (const FVector2D& Point : Polygon)
+		{
+			const FVector2D UV((Column + Point.X) / Columns, (Row + Point.Y) / Rows);
+			Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, Width, Height, FrontDepth), Normal, UV, Horizontal);
+		}
+		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
+		{
+			Mesh.AddTriangle(BaseIndex, BaseIndex + Index + 1, BaseIndex + Index);
+		}
+	}
+
+	void AppendCabinetBody(
+		FMeshBuffers& Mesh,
+		const TArray<FVector2D>& Polygon,
+		const FVector& Center,
+		const FVector& Normal,
+		const FVector& Horizontal,
+		float Width,
+		float Height,
+		float FrontDepth,
+		float BackDepth,
+		bool bIncludeFront)
+	{
+		const int32 BackBase = Mesh.Vertices.Num();
+		for (const FVector2D& Point : Polygon)
+		{
+			Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, Width, Height, BackDepth), -Normal, Point, -Horizontal);
+		}
+		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
+		{
+			Mesh.AddTriangle(BackBase, BackBase + Index, BackBase + Index + 1);
+		}
+
+		if (bIncludeFront)
+		{
+			const int32 FrontBase = Mesh.Vertices.Num();
+			for (const FVector2D& Point : Polygon)
+			{
+				Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, Width, Height, FrontDepth), Normal, Point, Horizontal);
+			}
+			for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
+			{
+				Mesh.AddTriangle(FrontBase, FrontBase + Index + 1, FrontBase + Index);
+			}
+		}
+
+		for (int32 Index = 0; Index < Polygon.Num(); ++Index)
+		{
+			const FVector2D A = Polygon[Index];
+			const FVector2D B = Polygon[(Index + 1) % Polygon.Num()];
+			const FVector FrontA = ToWorldPoint(A, Center, Normal, Horizontal, Width, Height, FrontDepth);
+			const FVector FrontB = ToWorldPoint(B, Center, Normal, Horizontal, Width, Height, FrontDepth);
+			const FVector BackA = ToWorldPoint(A, Center, Normal, Horizontal, Width, Height, BackDepth);
+			const FVector BackB = ToWorldPoint(B, Center, Normal, Horizontal, Width, Height, BackDepth);
+			const FVector SideNormal = FVector::CrossProduct(FrontB - FrontA, BackA - FrontA).GetSafeNormal();
+			const FVector SideTangent = (FrontB - FrontA).GetSafeNormal();
+			const int32 SideBase = Mesh.Vertices.Num();
+			Mesh.AddVertex(FrontA, SideNormal, FVector2D(0.0f, 0.0f), SideTangent);
+			Mesh.AddVertex(FrontB, SideNormal, FVector2D(1.0f, 0.0f), SideTangent);
+			Mesh.AddVertex(BackB, SideNormal, FVector2D(1.0f, 1.0f), SideTangent);
+			Mesh.AddVertex(BackA, SideNormal, FVector2D(0.0f, 1.0f), SideTangent);
+			Mesh.AddTriangle(SideBase, SideBase + 1, SideBase + 2);
+			Mesh.AddTriangle(SideBase, SideBase + 2, SideBase + 3);
+		}
+	}
+}
 
 ATSAVLEDWall::ATSAVLEDWall()
 {
@@ -22,6 +202,13 @@ ATSAVLEDWall::ATSAVLEDWall()
 	PanelSeams->SetMobility(EComponentMobility::Movable);
 	PanelSeams->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PanelSeams->SetGenerateOverlapEvents(false);
+
+	ShapedWallMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Shaped Wall Mesh"));
+	ShapedWallMesh->SetupAttachment(SceneRoot);
+	ShapedWallMesh->SetMobility(EComponentMobility::Movable);
+	ShapedWallMesh->SetGenerateOverlapEvents(false);
+	ShapedWallMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	ShapedWallMesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
@@ -61,16 +248,38 @@ FVector2D ATSAVLEDWall::GetPanelPixelPitchMm() const
 		GetEffectivePanelHeightCm() * 10.0f / PanelResolution.Y);
 }
 
+float ATSAVLEDWall::GetColumnAngleDegrees(int32 Column) const
+{
+	return ColumnAnglesDegrees.IsValidIndex(Column) ? TSAVLEDWall::Private::SanitizeAngle(ColumnAnglesDegrees[Column]) : 0.0f;
+}
+
+ETSAVLEDPanelEdgeStyle ATSAVLEDWall::GetPanelEdgeStyle(int32 Column, int32 Row) const
+{
+	const int32 Index = Row * FMath::Clamp(Columns, 1, 64) + Column;
+	return PanelEdgeStyles.IsValidIndex(Index) ? PanelEdgeStyles[Index] : ETSAVLEDPanelEdgeStyle::Square;
+}
+
 void ATSAVLEDWall::RebuildPanelLayout()
 {
 	RerunConstructionScripts();
 }
 
+void ATSAVLEDWall::OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial)
+{
+	if (ShapedWallMesh)
+	{
+		ShapedWallMesh->SetMaterial(0, AppliedMaterial);
+	}
+}
+
 void ATSAVLEDWall::UpdateGeometry()
 {
+	using namespace TSAVLEDWall::Private;
+
 	Columns = FMath::Clamp(Columns, 1, 64);
 	Rows = FMath::Clamp(Rows, 1, 64);
 	PanelGapCm = FMath::Max(PanelGapCm, 0.0f);
+	NormalizeShapeSettings();
 	const float EffectivePanelWidth = GetEffectivePanelWidthCm();
 	const float EffectivePanelHeight = GetEffectivePanelHeightCm();
 	const float EffectiveDepth = GetEffectivePanelDepthCm();
@@ -78,52 +287,79 @@ void ATSAVLEDWall::UpdateGeometry()
 
 	const float DisplayWidth = Columns * EffectivePanelWidth + (Columns - 1) * PanelGapCm;
 	const float DisplayHeight = Rows * EffectivePanelHeight + (Rows - 1) * PanelGapCm;
-	const float OuterWidth = DisplayWidth + 2.0f * EffectiveBorder;
-	const float OuterHeight = DisplayHeight + 2.0f * EffectiveBorder;
-	const float ScreenDepth = 0.4f;
-	const float FrontX = EffectiveDepth * 0.5f;
-	const float TrimDepth = 1.0f;
-
-	SetBox(Backing, FVector(EffectiveDepth, OuterWidth, OuterHeight), FVector::ZeroVector);
-	SetBox(DisplaySurface, FVector(ScreenDepth, DisplayWidth, DisplayHeight), FVector(FrontX + ScreenDepth * 0.5f, 0.0f, 0.0f));
-	SetBox(TopBorder, FVector(TrimDepth, OuterWidth, EffectiveBorder), FVector(FrontX + TrimDepth * 0.5f, 0.0f, (DisplayHeight + EffectiveBorder) * 0.5f));
-	SetBox(BottomBorder, FVector(TrimDepth, OuterWidth, EffectiveBorder), FVector(FrontX + TrimDepth * 0.5f, 0.0f, -(DisplayHeight + EffectiveBorder) * 0.5f));
-	SetBox(LeftBorder, FVector(TrimDepth, EffectiveBorder, DisplayHeight), FVector(FrontX + TrimDepth * 0.5f, -(DisplayWidth + EffectiveBorder) * 0.5f, 0.0f));
-	SetBox(RightBorder, FVector(TrimDepth, EffectiveBorder, DisplayHeight), FVector(FrontX + TrimDepth * 0.5f, (DisplayWidth + EffectiveBorder) * 0.5f, 0.0f));
-
-	ApplyFrameMaterial(Backing);
-	ApplyFrameMaterial(TopBorder);
-	ApplyFrameMaterial(BottomBorder);
-	ApplyFrameMaterial(LeftBorder);
-	ApplyFrameMaterial(RightBorder);
-
+	DisplaySurface->SetVisibility(false);
+	DisplaySurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	for (UStaticMeshComponent* LegacyComponent : {Backing.Get(), TopBorder.Get(), BottomBorder.Get(), LeftBorder.Get(), RightBorder.Get()})
+	{
+		LegacyComponent->SetVisibility(false);
+		LegacyComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
 	PanelSeams->ClearInstances();
-	PanelSeams->SetVisibility(bShowPanelSeams);
-	PanelSeams->SetMaterial(0, ResolveFrameMaterial());
+	PanelSeams->SetVisibility(false);
 
-	if (!bShowPanelSeams)
+	TArray<FVector> ColumnCenters;
+	TArray<FVector> ColumnNormals;
+	TArray<FVector> ColumnHorizontals;
+	ColumnCenters.Reserve(Columns);
+	ColumnNormals.Reserve(Columns);
+	ColumnHorizontals.Reserve(Columns);
+	FVector Cursor = FVector::ZeroVector;
+	for (int32 Column = 0; Column < Columns; ++Column)
 	{
-		UpdatePanelLinks();
-		return;
+		const float AngleRadians = FMath::DegreesToRadians(GetColumnAngleDegrees(Column));
+		const FVector Normal(FMath::Cos(AngleRadians), FMath::Sin(AngleRadians), 0.0f);
+		const FVector Horizontal(-FMath::Sin(AngleRadians), FMath::Cos(AngleRadians), 0.0f);
+		const FVector Center = Cursor + Horizontal * (EffectivePanelWidth * 0.5f);
+		ColumnCenters.Add(Center);
+		ColumnNormals.Add(Normal);
+		ColumnHorizontals.Add(Horizontal);
+		Cursor = Center + Horizontal * (EffectivePanelWidth * 0.5f + (Column + 1 < Columns ? PanelGapCm : 0.0f));
+	}
+	const FVector LayoutOffset = Cursor * 0.5f;
+	for (FVector& Center : ColumnCenters)
+	{
+		Center -= LayoutOffset;
 	}
 
-	const float SeamDepth = 0.3f;
-	const float SeamX = FrontX + ScreenDepth + SeamDepth * 0.5f;
-	const float SeamWidth = FMath::Max(PanelGapCm, 0.25f);
-	const float LeftEdge = -DisplayWidth * 0.5f;
-	const float BottomEdge = -DisplayHeight * 0.5f;
-
-	for (int32 Column = 1; Column < Columns; ++Column)
+	FMeshBuffers DisplayMesh;
+	FMeshBuffers FrameMesh;
+	const float FrontDepth = EffectiveDepth * 0.5f + 0.2f;
+	const float BackDepth = -EffectiveDepth * 0.5f;
+	const TArray<FVector2D> Rectangle = MakePanelPolygon(ETSAVLEDPanelEdgeStyle::Square);
+	for (int32 Row = 0; Row < Rows; ++Row)
 	{
-		const float Y = LeftEdge + Column * EffectivePanelWidth + (Column - 0.5f) * PanelGapCm;
-		PanelSeams->AddInstance(FTransform(FRotator::ZeroRotator, FVector(SeamX, Y, 0.0f), FVector(SeamDepth, SeamWidth, DisplayHeight) / 100.0f));
+		const float Z = DisplayHeight * 0.5f - EffectivePanelHeight * 0.5f - Row * (EffectivePanelHeight + PanelGapCm);
+		for (int32 Column = 0; Column < Columns; ++Column)
+		{
+			const FVector Center = ColumnCenters[Column] + FVector::UpVector * Z;
+			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row));
+			AppendFrontFace(DisplayMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, FrontDepth, Column, Row, Columns, Rows);
+			AppendCabinetBody(FrameMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, FrontDepth, BackDepth, false);
+		}
 	}
 
-	for (int32 Row = 1; Row < Rows; ++Row)
+	if (EffectiveBorder > 0.0f)
 	{
-		const float Z = BottomEdge + Row * EffectivePanelHeight + (Row - 0.5f) * PanelGapCm;
-		PanelSeams->AddInstance(FTransform(FRotator::ZeroRotator, FVector(SeamX, 0.0f, Z), FVector(SeamDepth, DisplayWidth, SeamWidth) / 100.0f));
+		for (int32 Column = 0; Column < Columns; ++Column)
+		{
+			const FVector TopCenter = ColumnCenters[Column] + FVector::UpVector * ((DisplayHeight + EffectiveBorder) * 0.5f);
+			const FVector BottomCenter = ColumnCenters[Column] - FVector::UpVector * ((DisplayHeight + EffectiveBorder) * 0.5f);
+			AppendCabinetBody(FrameMesh, Rectangle, TopCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+			AppendCabinetBody(FrameMesh, Rectangle, BottomCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+		}
+		const FVector LeftCenter = ColumnCenters[0] - ColumnHorizontals[0] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
+		const int32 LastColumn = Columns - 1;
+		const FVector RightCenter = ColumnCenters[LastColumn] + ColumnHorizontals[LastColumn] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
+		AppendCabinetBody(FrameMesh, Rectangle, LeftCenter, ColumnNormals[0], ColumnHorizontals[0], EffectiveBorder, DisplayHeight + 2.0f * EffectiveBorder, FrontDepth, BackDepth, true);
+		AppendCabinetBody(FrameMesh, Rectangle, RightCenter, ColumnNormals[LastColumn], ColumnHorizontals[LastColumn], EffectiveBorder, DisplayHeight + 2.0f * EffectiveBorder, FrontDepth, BackDepth, true);
 	}
+
+	ShapedWallMesh->ClearAllMeshSections();
+	ShapedWallMesh->CreateMeshSection_LinearColor(0, DisplayMesh.Vertices, DisplayMesh.Triangles, DisplayMesh.Normals, DisplayMesh.UVs, DisplayMesh.Colors, DisplayMesh.Tangents, false);
+	ShapedWallMesh->CreateMeshSection_LinearColor(1, FrameMesh.Vertices, FrameMesh.Triangles, FrameMesh.Normals, FrameMesh.UVs, FrameMesh.Colors, FrameMesh.Tangents, true);
+	ShapedWallMesh->SetMaterial(0, DisplayMaterialInstance ? DisplayMaterialInstance.Get() : DisplaySurface->GetMaterial(0));
+	ShapedWallMesh->SetMaterial(1, ResolveFrameMaterial());
+	ShapedWallMesh->SetVisibility(true);
 
 	UpdatePanelLinks();
 }
@@ -154,6 +390,26 @@ void ATSAVLEDWall::UpdatePanelLinks()
 			Link.GridPosition = FIntPoint(Column, Row);
 			Link.CanvasPixelPosition = CanvasPosition + FIntPoint(Column * PanelResolution.X, Row * PanelResolution.Y);
 			Link.CabinetResolution = PanelResolution;
+			Link.ColumnAngleDegrees = GetColumnAngleDegrees(Column);
+			Link.EdgeStyle = GetPanelEdgeStyle(Column, Row);
+		}
+	}
+}
+
+void ATSAVLEDWall::NormalizeShapeSettings()
+{
+	ColumnAnglesDegrees.SetNum(Columns);
+	for (float& Angle : ColumnAnglesDegrees)
+	{
+		Angle = TSAVLEDWall::Private::SanitizeAngle(Angle);
+	}
+
+	PanelEdgeStyles.SetNum(Columns * Rows);
+	for (ETSAVLEDPanelEdgeStyle& Style : PanelEdgeStyles)
+	{
+		if (static_cast<uint8>(Style) > static_cast<uint8>(ETSAVLEDPanelEdgeStyle::RoundBottomRight))
+		{
+			Style = ETSAVLEDPanelEdgeStyle::Square;
 		}
 	}
 }

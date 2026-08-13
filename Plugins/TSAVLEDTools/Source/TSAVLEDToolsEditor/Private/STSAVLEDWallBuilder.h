@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "TSAVMediaSurfaceActor.h"
+#include "TSAVLEDWall.h"
 #include "Widgets/SCompoundWidget.h"
 
 class ATSAVLEDWall;
@@ -28,6 +28,8 @@ private:
 	FReply CreateWall();
 	FReply UpdateWall();
 	void ApplySettings(ATSAVLEDWall& Wall) const;
+	void ResizeLayoutData(int32 NewColumns, int32 NewRows);
+	void CyclePanelEdge(int32 Column, int32 Row, bool bReverse);
 	ATSAVLEDWall* FindSelectedWall() const;
 	bool DoesScreenFitCanvas() const;
 	FIntPoint GetWallResolution() const;
@@ -58,6 +60,10 @@ private:
 	bool bPreviewInEditor = true;
 	ETSAVLEDSubpixelLayout SubpixelLayout = ETSAVLEDSubpixelLayout::None;
 	float SubpixelStrength = 1.0f;
+	TArray<float> ColumnAnglesDegrees;
+	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
+	int32 LayoutDataColumns = 8;
+	int32 LayoutDataRows = 4;
 
 	TWeakObjectPtr<UTSAVLEDPanelDefinition> PanelDefinition;
 	TWeakObjectPtr<UMediaSource> MediaSource;

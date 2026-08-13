@@ -178,6 +178,10 @@ UMaterialInterface* ATSAVMediaSurfaceActor::ResolveFrameMaterial() const
 	return UMaterial::GetDefaultMaterial(MD_Surface);
 }
 
+void ATSAVMediaSurfaceActor::OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial)
+{
+}
+
 void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 {
 	if (!DisplaySurface)
@@ -190,6 +194,7 @@ void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 	if (!DisplayMaterialInstance)
 	{
 		DisplaySurface->SetMaterial(0, BaseMaterial);
+		OnDisplayMaterialUpdated(BaseMaterial);
 		return;
 	}
 
@@ -225,6 +230,7 @@ void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 	}
 
 	DisplaySurface->SetMaterial(0, DisplayMaterialInstance);
+	OnDisplayMaterialUpdated(DisplayMaterialInstance);
 }
 
 void ATSAVMediaSurfaceActor::UpdatePlayback(bool bForceReopen)
