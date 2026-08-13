@@ -56,7 +56,7 @@ struct TSAVLEDTOOLS_API FTSAVLEDPanelLink
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Link")
 	FIntPoint CabinetResolution = FIntPoint(1, 1);
 
-	/** Absolute yaw assigned to this cabinet's column. */
+	/** Derived absolute yaw assigned to this cabinet's column. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Link")
 	float ColumnAngleDegrees = 0.0f;
 
@@ -117,8 +117,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Wall")
 	bool bShowPanelSeams = true;
 
-	/** Absolute yaw for each column, clamped to -15..15 degrees and snapped to 0.5 degrees. */
+	/** Bend at each seam (column N to N+1), clamped to -15..15 degrees in 0.5 degree steps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-15.0", ClampMax = "15.0"))
+	TArray<float> ColumnSeamAnglesDegrees;
+
+	/** Legacy absolute column headings retained only to migrate walls created by the initial implementation. */
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use ColumnSeamAnglesDegrees."))
 	TArray<float> ColumnAnglesDegrees;
 
 	/** Row-major panel face styles. Index = Row * Columns + Column. */
@@ -165,6 +169,7 @@ protected:
 
 private:
 	virtual FIntPoint GetNativePixelResolution() const override;
+	void BuildColumnTransforms(TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const;
 	void UpdateGeometry();
 	void UpdatePanelLinks();
 	void NormalizeShapeSettings();

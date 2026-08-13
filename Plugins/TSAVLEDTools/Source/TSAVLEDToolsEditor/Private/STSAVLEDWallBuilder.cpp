@@ -36,9 +36,27 @@
 
 namespace TSAVLEDBuilder::Private
 {
-	float SnapColumnAngle(float Angle)
+	float SnapSeamAngle(float Angle)
 	{
 		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -15.0f, 15.0f);
+	}
+
+	float GetDerivedColumnYaw(const TArray<float>* SeamAngles, int32 Columns, int32 Column)
+	{
+		const int32 SafeColumns = FMath::Clamp(Columns, 1, 64);
+		const int32 SafeColumn = FMath::Clamp(Column, 0, SafeColumns - 1);
+		float CurrentYaw = 0.0f;
+		float LastYaw = 0.0f;
+		for (int32 Seam = 0; Seam < SafeColumns - 1; ++Seam)
+		{
+			const float SeamAngle = SeamAngles && SeamAngles->IsValidIndex(Seam) ? SnapSeamAngle((*SeamAngles)[Seam]) : 0.0f;
+			LastYaw += SeamAngle;
+			if (Seam < SafeColumn)
+			{
+				CurrentYaw += SeamAngle;
+			}
+		}
+		return CurrentYaw - LastYaw * 0.5f;
 	}
 
 	FText GetEdgeStyleShortLabel(ETSAVLEDPanelEdgeStyle Style)
@@ -58,18 +76,18 @@ namespace TSAVLEDBuilder::Private
 		}
 	}
 
-	class SColumnAngleEditor final : public SCompoundWidget
+	class SColumnSeamAngleEditor final : public SCompoundWidget
 	{
 	public:
-		SLATE_BEGIN_ARGS(SColumnAngleEditor) {}
+		SLATE_BEGIN_ARGS(SColumnSeamAngleEditor) {}
 			SLATE_ATTRIBUTE(int32, Columns)
-			SLATE_ARGUMENT(TArray<float>*, Angles)
+			SLATE_ARGUMENT(TArray<float>*, SeamAngles)
 		SLATE_END_ARGS()
 
 		void Construct(const FArguments& Args)
 		{
 			Columns = Args._Columns;
-			Angles = Args._Angles;
+			SeamAngles = Args._SeamAngles;
 			Rebuild();
 		}
 
@@ -86,30 +104,41 @@ namespace TSAVLEDBuilder::Private
 		void Rebuild()
 		{
 			CachedColumns = FMath::Clamp(Columns.Get(), 1, 64);
-			if (!Angles)
+			if (!SeamAngles)
 			{
 				ChildSlot[SNullWidget::NullWidget];
 				return;
 			}
-			Angles->SetNum(CachedColumns);
+			const int32 SeamCount = FMath::Max(CachedColumns - 1, 0);
+			SeamAngles->SetNum(SeamCount);
+			if (SeamCount == 0)
+			{
+				ChildSlot
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("NoColumnSeams", "A one-column wall has no curvature seams."))
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				];
+				return;
+			}
 			TSharedRef<SWrapBox> Fields = SNew(SWrapBox).UseAllottedSize(true);
-			for (int32 Column = 0; Column < CachedColumns; ++Column)
+			for (int32 Seam = 0; Seam < SeamCount; ++Seam)
 			{
 				Fields->AddSlot().Padding(0.0f, 0.0f, 8.0f, 8.0f)
 				[
-					SNew(SBox).WidthOverride(118.0f)
+					SNew(SBox).WidthOverride(148.0f)
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot().AutoHeight()
 						[
 							SNew(STextBlock)
-							.Text(FText::Format(LOCTEXT("ColumnAngleLabel", "Column {0}"), FText::AsNumber(Column + 1)))
+							.Text(FText::Format(LOCTEXT("ColumnSeamAngleLabel", "Seam {0}  (C{1}–C{2})"), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 2)))
 							.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 						]
 						+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
 						[
 							SNew(SNumericEntryBox<float>)
-							.Value_Lambda([this, Column]() { return TOptional<float>(Angles->IsValidIndex(Column) ? (*Angles)[Column] : 0.0f); })
+							.Value_Lambda([this, Seam]() { return TOptional<float>(SeamAngles->IsValidIndex(Seam) ? (*SeamAngles)[Seam] : 0.0f); })
 							.MinValue(-15.0f)
 							.MaxValue(15.0f)
 							.MinSliderValue(-15.0f)
@@ -118,11 +147,11 @@ namespace TSAVLEDBuilder::Private
 							.MinFractionalDigits(1)
 							.MaxFractionalDigits(1)
 							.AllowSpin(true)
-							.OnValueChanged_Lambda([this, Column](float NewValue)
+							.OnValueChanged_Lambda([this, Seam](float NewValue)
 							{
-								if (Angles->IsValidIndex(Column))
+								if (SeamAngles->IsValidIndex(Seam))
 								{
-									(*Angles)[Column] = SnapColumnAngle(NewValue);
+									(*SeamAngles)[Seam] = SnapSeamAngle(NewValue);
 								}
 							})
 						]
@@ -133,7 +162,7 @@ namespace TSAVLEDBuilder::Private
 		}
 
 		TAttribute<int32> Columns;
-		TArray<float>* Angles = nullptr;
+		TArray<float>* SeamAngles = nullptr;
 		int32 CachedColumns = INDEX_NONE;
 	};
 
@@ -145,7 +174,7 @@ namespace TSAVLEDBuilder::Private
 		SLATE_BEGIN_ARGS(SPanelLayoutPreview) {}
 			SLATE_ATTRIBUTE(int32, Columns)
 			SLATE_ATTRIBUTE(int32, Rows)
-			SLATE_ARGUMENT(const TArray<float>*, Angles)
+			SLATE_ARGUMENT(const TArray<float>*, SeamAngles)
 			SLATE_ARGUMENT(const TArray<ETSAVLEDPanelEdgeStyle>*, EdgeStyles)
 			SLATE_EVENT(FOnPanelEdgeClicked, OnPanelEdgeClicked)
 		SLATE_END_ARGS()
@@ -154,7 +183,7 @@ namespace TSAVLEDBuilder::Private
 		{
 			Columns = Args._Columns;
 			Rows = Args._Rows;
-			Angles = Args._Angles;
+			SeamAngles = Args._SeamAngles;
 			EdgeStyles = Args._EdgeStyles;
 			OnPanelEdgeClicked = Args._OnPanelEdgeClicked;
 		}
@@ -191,12 +220,12 @@ namespace TSAVLEDBuilder::Private
 			{
 				if (CellWidth >= 34.0f)
 				{
-					const float Angle = Angles && Angles->IsValidIndex(Column) ? (*Angles)[Column] : 0.0f;
+					const float Angle = GetDerivedColumnYaw(SeamAngles, SafeColumns, Column);
 					FSlateDrawElement::MakeText(
 						OutDrawElements,
 						LayerId + 1,
 						AllottedGeometry.ToPaintGeometry(FVector2D(CellWidth, 18.0f), FSlateLayoutTransform(FVector2D(Grid.Left + Column * CellWidth, Grid.Top - 23.0f))),
-						FText::Format(LOCTEXT("AngleGridLabel", "{0} deg"), FText::AsNumber(Angle)),
+						FText::Format(LOCTEXT("AngleGridLabel", "C{0}  {1} deg"), FText::AsNumber(Column + 1), FText::AsNumber(Angle)),
 						SmallFont,
 						ESlateDrawEffect::None,
 						FLinearColor(0.45f, 0.75f, 0.95f));
@@ -287,10 +316,10 @@ namespace TSAVLEDBuilder::Private
 			const float CutY = FMath::Min((Rect.Bottom - Rect.Top) * 0.28f, 18.0f);
 			switch (Style)
 			{
-			case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft: return {{Rect.Left + CutX, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}, {Rect.Left, Rect.Top + CutY}};
-			case ETSAVLEDPanelEdgeStyle::DiagonalTopRight: return {{Rect.Left, Rect.Top}, {Rect.Right - CutX, Rect.Top}, {Rect.Right, Rect.Top + CutY}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
-			case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left + CutX, Rect.Bottom}, {Rect.Left, Rect.Bottom - CutY}};
-			case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom - CutY}, {Rect.Right - CutX, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
+			case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Left, Rect.Bottom}};
+			case ETSAVLEDPanelEdgeStyle::DiagonalTopRight: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}};
+			case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
+			case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight: return {{Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
 			case ETSAVLEDPanelEdgeStyle::RoundTopLeft: return {{Rect.Left + CutX, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}, {Rect.Left, Rect.Top + CutY}, {Rect.Left + CutX * 0.08f, Rect.Top + CutY * 0.62f}, {Rect.Left + CutX * 0.30f, Rect.Top + CutY * 0.30f}, {Rect.Left + CutX * 0.62f, Rect.Top + CutY * 0.08f}};
 			case ETSAVLEDPanelEdgeStyle::RoundTopRight: return {{Rect.Left, Rect.Top}, {Rect.Right - CutX, Rect.Top}, {Rect.Right - CutX * 0.62f, Rect.Top + CutY * 0.08f}, {Rect.Right - CutX * 0.30f, Rect.Top + CutY * 0.30f}, {Rect.Right - CutX * 0.08f, Rect.Top + CutY * 0.62f}, {Rect.Right, Rect.Top + CutY}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
 			case ETSAVLEDPanelEdgeStyle::RoundBottomLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left + CutX, Rect.Bottom}, {Rect.Left + CutX * 0.62f, Rect.Bottom - CutY * 0.08f}, {Rect.Left + CutX * 0.30f, Rect.Bottom - CutY * 0.30f}, {Rect.Left + CutX * 0.08f, Rect.Bottom - CutY * 0.62f}, {Rect.Left, Rect.Bottom - CutY}};
@@ -301,7 +330,7 @@ namespace TSAVLEDBuilder::Private
 
 		TAttribute<int32> Columns;
 		TAttribute<int32> Rows;
-		const TArray<float>* Angles = nullptr;
+		const TArray<float>* SeamAngles = nullptr;
 		const TArray<ETSAVLEDPanelEdgeStyle>* EdgeStyles = nullptr;
 		FOnPanelEdgeClicked OnPanelEdgeClicked;
 	};
@@ -636,21 +665,21 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 9.0f, 0.0f, 4.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ColumnAnglesTitle", "Column angles"))
+					.Text(LOCTEXT("ColumnAnglesTitle", "Column curvature"))
 					.Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ColumnAnglesHelp", "Set each column from -15.0 to +15.0 degrees in 0.5 degree steps. Positive angles turn toward stage right."))
+					.Text(LOCTEXT("ColumnAnglesHelp", "Set the bend at each seam from -15.0 to +15.0 degrees in 0.5 degree steps. Repeating a bend forms a smooth arc; positive and negative values curve in opposite directions."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
-					SNew(SColumnAngleEditor)
+					SNew(SColumnSeamAngleEditor)
 					.Columns_Lambda([this]() { return Columns; })
-					.Angles(&ColumnAnglesDegrees)
+					.SeamAngles(&ColumnSeamAnglesDegrees)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 4.0f)
 				[
@@ -676,7 +705,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 						SNew(SPanelLayoutPreview)
 						.Columns_Lambda([this]() { return Columns; })
 						.Rows_Lambda([this]() { return Rows; })
-						.Angles(&ColumnAnglesDegrees)
+						.SeamAngles(&ColumnSeamAnglesDegrees)
 						.EdgeStyles(&PanelEdgeStyles)
 						.OnPanelEdgeClicked(FOnPanelEdgeClicked::CreateSP(this, &STSAVLEDWallBuilder::ApplyPanelStyle))
 					]
@@ -842,10 +871,10 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 		}
 	}
 
-	ColumnAnglesDegrees.SetNum(NewColumns);
-	for (float& Angle : ColumnAnglesDegrees)
+	ColumnSeamAnglesDegrees.SetNum(FMath::Max(NewColumns - 1, 0));
+	for (float& Angle : ColumnSeamAnglesDegrees)
 	{
-		Angle = SnapColumnAngle(Angle);
+		Angle = SnapSeamAngle(Angle);
 	}
 	PanelEdgeStyles = MoveTemp(ResizedStyles);
 	Columns = NewColumns;
@@ -950,11 +979,11 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 		PanelResolutionY = PanelDefinition->ResolutionY;
 	}
 	ResizeLayoutData(Wall->Columns, Wall->Rows);
-	ColumnAnglesDegrees = Wall->ColumnAnglesDegrees;
-	ColumnAnglesDegrees.SetNum(Columns);
-	for (float& Angle : ColumnAnglesDegrees)
+	ColumnSeamAnglesDegrees = Wall->ColumnSeamAnglesDegrees;
+	ColumnSeamAnglesDegrees.SetNum(FMath::Max(Columns - 1, 0));
+	for (float& Angle : ColumnSeamAnglesDegrees)
 	{
-		Angle = TSAVLEDBuilder::Private::SnapColumnAngle(Angle);
+		Angle = TSAVLEDBuilder::Private::SnapSeamAngle(Angle);
 	}
 	PanelEdgeStyles = Wall->PanelEdgeStyles;
 	PanelEdgeStyles.SetNum(Columns * Rows);
@@ -1054,12 +1083,14 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 	Wall.PanelResolutionY = PanelResolutionY;
 	Wall.Columns = FMath::Clamp(Columns, 1, 64);
 	Wall.Rows = FMath::Clamp(Rows, 1, 64);
-	Wall.ColumnAnglesDegrees.SetNum(Wall.Columns);
-	for (int32 Column = 0; Column < Wall.Columns; ++Column)
+	const int32 SeamCount = FMath::Max(Wall.Columns - 1, 0);
+	Wall.ColumnSeamAnglesDegrees.SetNum(SeamCount);
+	for (int32 Seam = 0; Seam < SeamCount; ++Seam)
 	{
-		const float Angle = ColumnAnglesDegrees.IsValidIndex(Column) ? ColumnAnglesDegrees[Column] : 0.0f;
-		Wall.ColumnAnglesDegrees[Column] = TSAVLEDBuilder::Private::SnapColumnAngle(Angle);
+		const float Angle = ColumnSeamAnglesDegrees.IsValidIndex(Seam) ? ColumnSeamAnglesDegrees[Seam] : 0.0f;
+		Wall.ColumnSeamAnglesDegrees[Seam] = TSAVLEDBuilder::Private::SnapSeamAngle(Angle);
 	}
+	Wall.ColumnAnglesDegrees.Reset();
 	Wall.PanelEdgeStyles.Init(ETSAVLEDPanelEdgeStyle::Square, Wall.Columns * Wall.Rows);
 	for (int32 Index = 0; Index < Wall.PanelEdgeStyles.Num() && Index < PanelEdgeStyles.Num(); ++Index)
 	{
@@ -1122,10 +1153,10 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 	const FIntPoint Resolution = GetWallResolution();
 	const float PhysicalWidth = FMath::Max(Columns, 1) * PanelWidthCm + FMath::Max(Columns - 1, 0) * PanelGapCm;
 	const float PhysicalHeight = FMath::Max(Rows, 1) * PanelHeightCm + FMath::Max(Rows - 1, 0) * PanelGapCm;
-	int32 AngledColumns = 0;
-	for (const float Angle : ColumnAnglesDegrees)
+	int32 CurvedSeams = 0;
+	for (const float Angle : ColumnSeamAnglesDegrees)
 	{
-		AngledColumns += !FMath::IsNearlyZero(Angle) ? 1 : 0;
+		CurvedSeams += !FMath::IsNearlyZero(Angle) ? 1 : 0;
 	}
 	int32 ActivePanels = 0;
 	int32 ShapedPanels = 0;
@@ -1138,14 +1169,14 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 		EmptyPanels += bEmpty ? 1 : 0;
 	}
 	return FText::Format(
-		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} angled columns  •  {7} shaped panels"),
+		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} curved seams  •  {7} shaped panels"),
 		FText::AsNumber(ActivePanels),
 		FText::AsNumber(EmptyPanels),
 		FText::AsNumber(Resolution.X),
 		FText::AsNumber(Resolution.Y),
 		FText::AsNumber(PhysicalWidth),
 		FText::AsNumber(PhysicalHeight),
-		FText::AsNumber(AngledColumns),
+		FText::AsNumber(CurvedSeams),
 		FText::AsNumber(ShapedPanels));
 }
 

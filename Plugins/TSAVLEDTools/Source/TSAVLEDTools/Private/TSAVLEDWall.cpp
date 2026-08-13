@@ -65,13 +65,13 @@ namespace TSAVLEDWall::Private
 		switch (Style)
 		{
 		case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft:
-			return {{Cut, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, Cut}};
+			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}};
 		case ETSAVLEDPanelEdgeStyle::DiagonalTopRight:
-			return {{0.0f, 0.0f}, {1.0f - Cut, 0.0f}, {1.0f, Cut}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}};
 		case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft:
-			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {Cut, 1.0f}, {0.0f, 1.0f - Cut}};
+			return {{0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
 		case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight:
-			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f - Cut}, {1.0f - Cut, 1.0f}, {0.0f, 1.0f}};
+			return {{1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
 		case ETSAVLEDPanelEdgeStyle::RoundTopLeft:
 			Points = {{Cut, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, Cut}};
 			AddArc(Points, FVector2D(Cut, Cut), 180.0f, 270.0f, false);
@@ -129,7 +129,7 @@ namespace TSAVLEDWall::Private
 		}
 		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
 		{
-			Mesh.AddTriangle(BaseIndex, BaseIndex + Index + 1, BaseIndex + Index);
+			Mesh.AddTriangle(BaseIndex, BaseIndex + Index, BaseIndex + Index + 1);
 		}
 	}
 
@@ -152,7 +152,7 @@ namespace TSAVLEDWall::Private
 		}
 		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
 		{
-			Mesh.AddTriangle(BackBase, BackBase + Index, BackBase + Index + 1);
+			Mesh.AddTriangle(BackBase, BackBase + Index + 1, BackBase + Index);
 		}
 
 		if (bIncludeFront)
@@ -164,7 +164,7 @@ namespace TSAVLEDWall::Private
 			}
 			for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
 			{
-				Mesh.AddTriangle(FrontBase, FrontBase + Index + 1, FrontBase + Index);
+				Mesh.AddTriangle(FrontBase, FrontBase + Index, FrontBase + Index + 1);
 			}
 		}
 
@@ -183,8 +183,8 @@ namespace TSAVLEDWall::Private
 			Mesh.AddVertex(FrontB, SideNormal, FVector2D(1.0f, 0.0f), SideTangent);
 			Mesh.AddVertex(BackB, SideNormal, FVector2D(1.0f, 1.0f), SideTangent);
 			Mesh.AddVertex(BackA, SideNormal, FVector2D(0.0f, 1.0f), SideTangent);
-			Mesh.AddTriangle(SideBase, SideBase + 1, SideBase + 2);
-			Mesh.AddTriangle(SideBase, SideBase + 2, SideBase + 3);
+			Mesh.AddTriangle(SideBase, SideBase + 2, SideBase + 1);
+			Mesh.AddTriangle(SideBase, SideBase + 3, SideBase + 2);
 		}
 	}
 }
@@ -250,7 +250,10 @@ FVector2D ATSAVLEDWall::GetPanelPixelPitchMm() const
 
 float ATSAVLEDWall::GetColumnAngleDegrees(int32 Column) const
 {
-	return ColumnAnglesDegrees.IsValidIndex(Column) ? TSAVLEDWall::Private::SanitizeAngle(ColumnAnglesDegrees[Column]) : 0.0f;
+	TArray<FVector> ColumnCenters;
+	TArray<float> ColumnYaws;
+	BuildColumnTransforms(ColumnCenters, ColumnYaws);
+	return ColumnYaws.IsValidIndex(Column) ? ColumnYaws[Column] : 0.0f;
 }
 
 ETSAVLEDPanelEdgeStyle ATSAVLEDWall::GetPanelEdgeStyle(int32 Column, int32 Row) const
@@ -276,6 +279,56 @@ void ATSAVLEDWall::OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial)
 	if (ShapedWallMesh)
 	{
 		ShapedWallMesh->SetMaterial(0, AppliedMaterial);
+	}
+}
+
+void ATSAVLEDWall::BuildColumnTransforms(TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const
+{
+	const int32 SafeColumns = FMath::Clamp(Columns, 1, 64);
+	const float PanelWidth = GetEffectivePanelWidthCm();
+	const float GapHalf = FMath::Max(PanelGapCm, 0.0f) * 0.5f;
+
+	OutCenters.SetNumZeroed(SafeColumns);
+	OutYawDegrees.SetNumZeroed(SafeColumns);
+
+	// Each stored value is a hinge delta between this column and the next one.
+	// Accumulating the deltas makes repeated values form a real arc instead of
+	// rotating every cabinet to the same absolute heading.
+	for (int32 Column = 1; Column < SafeColumns; ++Column)
+	{
+		const float SeamAngle = ColumnSeamAnglesDegrees.IsValidIndex(Column - 1)
+			? TSAVLEDWall::Private::SanitizeAngle(ColumnSeamAnglesDegrees[Column - 1])
+			: 0.0f;
+		OutYawDegrees[Column] = OutYawDegrees[Column - 1] + SeamAngle;
+	}
+
+	// Center the overall wall facing on the actor so convex and concave curves do
+	// not inherit an arbitrary rotation from the first column.
+	const float FacingCenter = (OutYawDegrees[0] + OutYawDegrees.Last()) * 0.5f;
+	for (float& Yaw : OutYawDegrees)
+	{
+		Yaw -= FacingCenter;
+	}
+
+	// Join the two cabinet edges at every hinge. Half of a configured gap follows
+	// each neighboring tangent, which preserves even spacing through the curve.
+	for (int32 Column = 1; Column < SafeColumns; ++Column)
+	{
+		const FVector PreviousTangent = FRotator(0.0f, OutYawDegrees[Column - 1], 0.0f).RotateVector(FVector::YAxisVector);
+		const FVector CurrentTangent = FRotator(0.0f, OutYawDegrees[Column], 0.0f).RotateVector(FVector::YAxisVector);
+		OutCenters[Column] = OutCenters[Column - 1]
+			+ PreviousTangent * (PanelWidth * 0.5f + GapHalf)
+			+ CurrentTangent * (PanelWidth * 0.5f + GapHalf);
+	}
+
+	const FVector FirstTangent = FRotator(0.0f, OutYawDegrees[0], 0.0f).RotateVector(FVector::YAxisVector);
+	const FVector LastTangent = FRotator(0.0f, OutYawDegrees.Last(), 0.0f).RotateVector(FVector::YAxisVector);
+	const FVector FirstEdge = OutCenters[0] - FirstTangent * (PanelWidth * 0.5f + GapHalf);
+	const FVector LastEdge = OutCenters.Last() + LastTangent * (PanelWidth * 0.5f + GapHalf);
+	const FVector CenterOffset = (FirstEdge + LastEdge) * 0.5f;
+	for (FVector& Center : OutCenters)
+	{
+		Center -= CenterOffset;
 	}
 }
 
@@ -305,27 +358,19 @@ void ATSAVLEDWall::UpdateGeometry()
 	PanelSeams->SetVisibility(false);
 
 	TArray<FVector> ColumnCenters;
+	TArray<float> ColumnYaws;
+	BuildColumnTransforms(ColumnCenters, ColumnYaws);
 	TArray<FVector> ColumnNormals;
 	TArray<FVector> ColumnHorizontals;
-	ColumnCenters.Reserve(Columns);
 	ColumnNormals.Reserve(Columns);
 	ColumnHorizontals.Reserve(Columns);
-	FVector Cursor = FVector::ZeroVector;
 	for (int32 Column = 0; Column < Columns; ++Column)
 	{
-		const float AngleRadians = FMath::DegreesToRadians(GetColumnAngleDegrees(Column));
+		const float AngleRadians = FMath::DegreesToRadians(ColumnYaws[Column]);
 		const FVector Normal(FMath::Cos(AngleRadians), FMath::Sin(AngleRadians), 0.0f);
 		const FVector Horizontal(-FMath::Sin(AngleRadians), FMath::Cos(AngleRadians), 0.0f);
-		const FVector Center = Cursor + Horizontal * (EffectivePanelWidth * 0.5f);
-		ColumnCenters.Add(Center);
 		ColumnNormals.Add(Normal);
 		ColumnHorizontals.Add(Horizontal);
-		Cursor = Center + Horizontal * (EffectivePanelWidth * 0.5f + (Column + 1 < Columns ? PanelGapCm : 0.0f));
-	}
-	const FVector LayoutOffset = Cursor * 0.5f;
-	for (FVector& Center : ColumnCenters)
-	{
-		Center -= LayoutOffset;
 	}
 
 	FMeshBuffers DisplayMesh;
@@ -428,8 +473,32 @@ void ATSAVLEDWall::UpdatePanelLinks()
 
 void ATSAVLEDWall::NormalizeShapeSettings()
 {
-	ColumnAnglesDegrees.SetNum(Columns);
-	for (float& Angle : ColumnAnglesDegrees)
+	const int32 RequiredSeams = FMath::Max(Columns - 1, 0);
+	if (ColumnSeamAnglesDegrees.IsEmpty() && !ColumnAnglesDegrees.IsEmpty())
+	{
+		ColumnSeamAnglesDegrees.SetNum(RequiredSeams);
+		if (ColumnAnglesDegrees.Num() == Columns)
+		{
+			// Migrate walls saved by the initial implementation, where the legacy
+			// values were absolute column headings.
+			for (int32 Seam = 0; Seam < RequiredSeams; ++Seam)
+			{
+				ColumnSeamAnglesDegrees[Seam] = TSAVLEDWall::Private::SanitizeAngle(ColumnAnglesDegrees[Seam + 1] - ColumnAnglesDegrees[Seam]);
+			}
+		}
+		else
+		{
+			// Also accept experimental assets that already stored one value per seam
+			// under the legacy property name.
+			for (int32 Seam = 0; Seam < RequiredSeams; ++Seam)
+			{
+				ColumnSeamAnglesDegrees[Seam] = ColumnAnglesDegrees.IsValidIndex(Seam) ? ColumnAnglesDegrees[Seam] : 0.0f;
+			}
+		}
+		ColumnAnglesDegrees.Reset();
+	}
+	ColumnSeamAnglesDegrees.SetNum(RequiredSeams);
+	for (float& Angle : ColumnSeamAnglesDegrees)
 	{
 		Angle = TSAVLEDWall::Private::SanitizeAngle(Angle);
 	}

@@ -60,7 +60,7 @@ private:
 	bool bPreviewInEditor = true;
 	ETSAVLEDSubpixelLayout SubpixelLayout = ETSAVLEDSubpixelLayout::None;
 	float SubpixelStrength = 1.0f;
-	TArray<float> ColumnAnglesDegrees;
+	TArray<float> ColumnSeamAnglesDegrees;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 	ETSAVLEDPanelEdgeStyle SelectedPanelStyle = ETSAVLEDPanelEdgeStyle::Square;
 	int32 LayoutDataColumns = 8;
