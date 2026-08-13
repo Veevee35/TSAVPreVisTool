@@ -259,6 +259,13 @@ ETSAVLEDPanelEdgeStyle ATSAVLEDWall::GetPanelEdgeStyle(int32 Column, int32 Row) 
 	return PanelEdgeStyles.IsValidIndex(Index) ? PanelEdgeStyles[Index] : ETSAVLEDPanelEdgeStyle::Square;
 }
 
+bool ATSAVLEDWall::IsPanelEnabled(int32 Column, int32 Row) const
+{
+	return Column >= 0 && Column < FMath::Clamp(Columns, 1, 64) &&
+		Row >= 0 && Row < FMath::Clamp(Rows, 1, 64) &&
+		GetPanelEdgeStyle(Column, Row) != ETSAVLEDPanelEdgeStyle::Disabled;
+}
+
 void ATSAVLEDWall::RebuildPanelLayout()
 {
 	RerunConstructionScripts();
@@ -331,32 +338,51 @@ void ATSAVLEDWall::UpdateGeometry()
 		const float Z = DisplayHeight * 0.5f - EffectivePanelHeight * 0.5f - Row * (EffectivePanelHeight + PanelGapCm);
 		for (int32 Column = 0; Column < Columns; ++Column)
 		{
+			if (!IsPanelEnabled(Column, Row))
+			{
+				continue;
+			}
+
 			const FVector Center = ColumnCenters[Column] + FVector::UpVector * Z;
 			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row));
 			AppendFrontFace(DisplayMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, FrontDepth, Column, Row, Columns, Rows);
 			AppendCabinetBody(FrameMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, FrontDepth, BackDepth, false);
-		}
-	}
 
-	if (EffectiveBorder > 0.0f)
-	{
-		for (int32 Column = 0; Column < Columns; ++Column)
-		{
-			const FVector TopCenter = ColumnCenters[Column] + FVector::UpVector * ((DisplayHeight + EffectiveBorder) * 0.5f);
-			const FVector BottomCenter = ColumnCenters[Column] - FVector::UpVector * ((DisplayHeight + EffectiveBorder) * 0.5f);
-			AppendCabinetBody(FrameMesh, Rectangle, TopCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
-			AppendCabinetBody(FrameMesh, Rectangle, BottomCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+			if (EffectiveBorder > 0.0f)
+			{
+				if (!IsPanelEnabled(Column, Row - 1))
+				{
+					const FVector TopCenter = Center + FVector::UpVector * ((EffectivePanelHeight + EffectiveBorder) * 0.5f);
+					AppendCabinetBody(FrameMesh, Rectangle, TopCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+				}
+				if (!IsPanelEnabled(Column, Row + 1))
+				{
+					const FVector BottomCenter = Center - FVector::UpVector * ((EffectivePanelHeight + EffectiveBorder) * 0.5f);
+					AppendCabinetBody(FrameMesh, Rectangle, BottomCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+				}
+				if (!IsPanelEnabled(Column - 1, Row))
+				{
+					const FVector LeftCenter = Center - ColumnHorizontals[Column] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
+					AppendCabinetBody(FrameMesh, Rectangle, LeftCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectiveBorder, EffectivePanelHeight, FrontDepth, BackDepth, true);
+				}
+				if (!IsPanelEnabled(Column + 1, Row))
+				{
+					const FVector RightCenter = Center + ColumnHorizontals[Column] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
+					AppendCabinetBody(FrameMesh, Rectangle, RightCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectiveBorder, EffectivePanelHeight, FrontDepth, BackDepth, true);
+				}
+			}
 		}
-		const FVector LeftCenter = ColumnCenters[0] - ColumnHorizontals[0] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
-		const int32 LastColumn = Columns - 1;
-		const FVector RightCenter = ColumnCenters[LastColumn] + ColumnHorizontals[LastColumn] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
-		AppendCabinetBody(FrameMesh, Rectangle, LeftCenter, ColumnNormals[0], ColumnHorizontals[0], EffectiveBorder, DisplayHeight + 2.0f * EffectiveBorder, FrontDepth, BackDepth, true);
-		AppendCabinetBody(FrameMesh, Rectangle, RightCenter, ColumnNormals[LastColumn], ColumnHorizontals[LastColumn], EffectiveBorder, DisplayHeight + 2.0f * EffectiveBorder, FrontDepth, BackDepth, true);
 	}
 
 	ShapedWallMesh->ClearAllMeshSections();
-	ShapedWallMesh->CreateMeshSection_LinearColor(0, DisplayMesh.Vertices, DisplayMesh.Triangles, DisplayMesh.Normals, DisplayMesh.UVs, DisplayMesh.Colors, DisplayMesh.Tangents, false);
-	ShapedWallMesh->CreateMeshSection_LinearColor(1, FrameMesh.Vertices, FrameMesh.Triangles, FrameMesh.Normals, FrameMesh.UVs, FrameMesh.Colors, FrameMesh.Tangents, true);
+	if (!DisplayMesh.Vertices.IsEmpty())
+	{
+		ShapedWallMesh->CreateMeshSection_LinearColor(0, DisplayMesh.Vertices, DisplayMesh.Triangles, DisplayMesh.Normals, DisplayMesh.UVs, DisplayMesh.Colors, DisplayMesh.Tangents, false);
+	}
+	if (!FrameMesh.Vertices.IsEmpty())
+	{
+		ShapedWallMesh->CreateMeshSection_LinearColor(1, FrameMesh.Vertices, FrameMesh.Triangles, FrameMesh.Normals, FrameMesh.UVs, FrameMesh.Colors, FrameMesh.Tangents, true);
+	}
 	ShapedWallMesh->SetMaterial(0, DisplayMaterialInstance ? DisplayMaterialInstance.Get() : DisplaySurface->GetMaterial(0));
 	ShapedWallMesh->SetMaterial(1, ResolveFrameMaterial());
 	ShapedWallMesh->SetVisibility(true);
@@ -384,6 +410,10 @@ void ATSAVLEDWall::UpdatePanelLinks()
 		{
 			const bool bReverseRow = LinkPattern == ETSAVLEDLinkPattern::RowsSerpentine && (Row % 2) == 1;
 			const int32 Column = bReverseRow ? Columns - PositionInRow - 1 : PositionInRow;
+			if (!IsPanelEnabled(Column, Row))
+			{
+				continue;
+			}
 
 			FTSAVLEDPanelLink& Link = PanelLinks.AddDefaulted_GetRef();
 			Link.LinkIndex = LinkIndex++;
@@ -407,7 +437,7 @@ void ATSAVLEDWall::NormalizeShapeSettings()
 	PanelEdgeStyles.SetNum(Columns * Rows);
 	for (ETSAVLEDPanelEdgeStyle& Style : PanelEdgeStyles)
 	{
-		if (static_cast<uint8>(Style) > static_cast<uint8>(ETSAVLEDPanelEdgeStyle::RoundBottomRight))
+		if (static_cast<uint8>(Style) > static_cast<uint8>(ETSAVLEDPanelEdgeStyle::Disabled))
 		{
 			Style = ETSAVLEDPanelEdgeStyle::Square;
 		}

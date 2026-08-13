@@ -53,6 +53,7 @@ namespace TSAVLEDBuilder::Private
 		case ETSAVLEDPanelEdgeStyle::RoundTopRight: return LOCTEXT("RoundTopRightShort", "R TR");
 		case ETSAVLEDPanelEdgeStyle::RoundBottomLeft: return LOCTEXT("RoundBottomLeftShort", "R BL");
 		case ETSAVLEDPanelEdgeStyle::RoundBottomRight: return LOCTEXT("RoundBottomRightShort", "R BR");
+		case ETSAVLEDPanelEdgeStyle::Disabled: return LOCTEXT("DisabledShort", "EMPTY");
 		default: return FText::GetEmpty();
 		}
 	}
@@ -213,14 +214,32 @@ namespace TSAVLEDBuilder::Private
 						Grid.Top + Row * CellHeight + 2.0f,
 						Grid.Left + (Column + 1) * CellWidth - 2.0f,
 						Grid.Top + (Row + 1) * CellHeight - 2.0f);
+					const bool bDisabled = Style == ETSAVLEDPanelEdgeStyle::Disabled;
+					if (bDisabled)
+					{
+						FSlateDrawElement::MakeBox(
+							OutDrawElements,
+							LayerId + 2,
+							AllottedGeometry.ToPaintGeometry(FVector2D(Cell.Right - Cell.Left, Cell.Bottom - Cell.Top), FSlateLayoutTransform(FVector2D(Cell.Left, Cell.Top))),
+							FAppStyle::GetBrush(TEXT("WhiteBrush")),
+							ESlateDrawEffect::None,
+							FLinearColor(0.12f, 0.04f, 0.05f, 0.9f));
+						const FLinearColor DisabledLineColor(0.75f, 0.18f, 0.16f, 0.9f);
+						TArray<FVector2D> SlashA{FVector2D(Cell.Left, Cell.Top), FVector2D(Cell.Right, Cell.Bottom)};
+						TArray<FVector2D> SlashB{FVector2D(Cell.Right, Cell.Top), FVector2D(Cell.Left, Cell.Bottom)};
+						FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 3, AllottedGeometry.ToPaintGeometry(), SlashA, ESlateDrawEffect::None, DisabledLineColor, true, 2.0f);
+						FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 3, AllottedGeometry.ToPaintGeometry(), SlashB, ESlateDrawEffect::None, DisabledLineColor, true, 2.0f);
+					}
 					TArray<FVector2D> Outline = MakeOutline(Style, Cell);
-					Outline.Add(Outline[0]);
-					FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 2, AllottedGeometry.ToPaintGeometry(), Outline, ESlateDrawEffect::None, FLinearColor(0.02f, 0.58f, 0.82f, 1.0f), true, 2.0f);
+					const FVector2D FirstOutlinePoint = Outline[0];
+					Outline.Add(FirstOutlinePoint);
+					const FLinearColor OutlineColor = bDisabled ? FLinearColor(0.5f, 0.16f, 0.16f, 1.0f) : FLinearColor(0.02f, 0.58f, 0.82f, 1.0f);
+					FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 4, AllottedGeometry.ToPaintGeometry(), Outline, ESlateDrawEffect::None, OutlineColor, true, 2.0f);
 					if (CellWidth >= 38.0f && CellHeight >= 24.0f && Style != ETSAVLEDPanelEdgeStyle::Square)
 					{
 						FSlateDrawElement::MakeText(
 							OutDrawElements,
-							LayerId + 3,
+							LayerId + 5,
 							AllottedGeometry.ToPaintGeometry(FVector2D(CellWidth - 4.0f, 16.0f), FSlateLayoutTransform(FVector2D(Cell.Left + 3.0f, (Cell.Top + Cell.Bottom) * 0.5f - 8.0f))),
 							GetEdgeStyleShortLabel(Style),
 							SmallFont,
@@ -229,7 +248,7 @@ namespace TSAVLEDBuilder::Private
 					}
 				}
 			}
-			return LayerId + 3;
+			return LayerId + 5;
 		}
 
 		virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
@@ -483,6 +502,37 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 			];
 	};
 
+	auto MakePanelStyleButton = [this](const FText& Label, ETSAVLEDPanelEdgeStyle Style) -> TSharedRef<SWidget>
+	{
+		return SNew(SCheckBox)
+			.Style(FAppStyle::Get(), TEXT("RadioButton"))
+			.IsChecked_Lambda([this, Style]() { return SelectedPanelStyle == Style ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+			.OnCheckStateChanged_Lambda([this, Style](ECheckBoxState State)
+			{
+				if (State == ECheckBoxState::Checked)
+				{
+					SelectedPanelStyle = Style;
+				}
+			})
+			[SNew(STextBlock).Text(Label)];
+	};
+
+	TSharedRef<SWrapBox> PanelStylePicker = SNew(SWrapBox).UseAllottedSize(true);
+	auto AddPanelStyle = [&PanelStylePicker, &MakePanelStyleButton](const FText& Label, ETSAVLEDPanelEdgeStyle Style)
+	{
+		PanelStylePicker->AddSlot().Padding(0.0f, 0.0f, 14.0f, 5.0f)[MakePanelStyleButton(Label, Style)];
+	};
+	AddPanelStyle(LOCTEXT("PaintSquare", "Square"), ETSAVLEDPanelEdgeStyle::Square);
+	AddPanelStyle(LOCTEXT("PaintEmpty", "Empty"), ETSAVLEDPanelEdgeStyle::Disabled);
+	AddPanelStyle(LOCTEXT("PaintDiagonalTL", "Diagonal TL"), ETSAVLEDPanelEdgeStyle::DiagonalTopLeft);
+	AddPanelStyle(LOCTEXT("PaintDiagonalTR", "Diagonal TR"), ETSAVLEDPanelEdgeStyle::DiagonalTopRight);
+	AddPanelStyle(LOCTEXT("PaintDiagonalBL", "Diagonal BL"), ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft);
+	AddPanelStyle(LOCTEXT("PaintDiagonalBR", "Diagonal BR"), ETSAVLEDPanelEdgeStyle::DiagonalBottomRight);
+	AddPanelStyle(LOCTEXT("PaintRoundTL", "Round TL"), ETSAVLEDPanelEdgeStyle::RoundTopLeft);
+	AddPanelStyle(LOCTEXT("PaintRoundTR", "Round TR"), ETSAVLEDPanelEdgeStyle::RoundTopRight);
+	AddPanelStyle(LOCTEXT("PaintRoundBL", "Round BL"), ETSAVLEDPanelEdgeStyle::RoundBottomLeft);
+	AddPanelStyle(LOCTEXT("PaintRoundBR", "Round BR"), ETSAVLEDPanelEdgeStyle::RoundBottomRight);
+
 	ChildSlot
 	[
 		SNew(SBorder)
@@ -605,15 +655,19 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 4.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("PanelEdgesTitle", "Interactive panel edge grid"))
+					.Text(LOCTEXT("PanelEdgesTitle", "Panel shape grid"))
 					.Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("PanelEdgesHelp", "Left-click a panel repeatedly to cycle square, diagonal top/bottom in both directions, and rounded top/bottom in both directions. Right-click cycles backward."))
+					.Text(LOCTEXT("PanelEdgesHelp", "Choose a shape, then click panels to apply it. Empty removes the cabinet and lets the outer trim follow the remaining shape. Right-click any cell to restore Square."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 7.0f)
+				[
+					PanelStylePicker
 				]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
@@ -624,7 +678,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 						.Rows_Lambda([this]() { return Rows; })
 						.Angles(&ColumnAnglesDegrees)
 						.EdgeStyles(&PanelEdgeStyles)
-						.OnPanelEdgeClicked(FOnPanelEdgeClicked::CreateSP(this, &STSAVLEDWallBuilder::CyclePanelEdge))
+						.OnPanelEdgeClicked(FOnPanelEdgeClicked::CreateSP(this, &STSAVLEDWallBuilder::ApplyPanelStyle))
 					]
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f)
@@ -800,7 +854,7 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 	LayoutDataRows = NewRows;
 }
 
-void STSAVLEDWallBuilder::CyclePanelEdge(int32 Column, int32 Row, bool bReverse)
+void STSAVLEDWallBuilder::ApplyPanelStyle(int32 Column, int32 Row, bool bResetToSquare)
 {
 	const int32 Index = Row * Columns + Column;
 	if (!PanelEdgeStyles.IsValidIndex(Index))
@@ -808,10 +862,7 @@ void STSAVLEDWallBuilder::CyclePanelEdge(int32 Column, int32 Row, bool bReverse)
 		return;
 	}
 
-	constexpr int32 StyleCount = static_cast<int32>(ETSAVLEDPanelEdgeStyle::RoundBottomRight) + 1;
-	const int32 CurrentStyle = static_cast<int32>(PanelEdgeStyles[Index]);
-	const int32 Direction = bReverse ? -1 : 1;
-	PanelEdgeStyles[Index] = static_cast<ETSAVLEDPanelEdgeStyle>((CurrentStyle + Direction + StyleCount) % StyleCount);
+	PanelEdgeStyles[Index] = bResetToSquare ? ETSAVLEDPanelEdgeStyle::Square : SelectedPanelStyle;
 }
 
 void STSAVLEDWallBuilder::OnPanelDefinitionChanged(const FAssetData& AssetData)
@@ -1076,14 +1127,20 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 	{
 		AngledColumns += !FMath::IsNearlyZero(Angle) ? 1 : 0;
 	}
+	int32 ActivePanels = 0;
 	int32 ShapedPanels = 0;
+	int32 EmptyPanels = 0;
 	for (const ETSAVLEDPanelEdgeStyle Style : PanelEdgeStyles)
 	{
-		ShapedPanels += Style != ETSAVLEDPanelEdgeStyle::Square ? 1 : 0;
+		const bool bEmpty = Style == ETSAVLEDPanelEdgeStyle::Disabled;
+		ActivePanels += bEmpty ? 0 : 1;
+		ShapedPanels += !bEmpty && Style != ETSAVLEDPanelEdgeStyle::Square ? 1 : 0;
+		EmptyPanels += bEmpty ? 1 : 0;
 	}
 	return FText::Format(
-		LOCTEXT("WallSummary", "{0} panels  •  {1} × {2} px  •  {3} × {4} cm  •  {5} angled columns  •  {6} shaped panels"),
-		FText::AsNumber(FMath::Max(Columns, 1) * FMath::Max(Rows, 1)),
+		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} angled columns  •  {7} shaped panels"),
+		FText::AsNumber(ActivePanels),
+		FText::AsNumber(EmptyPanels),
 		FText::AsNumber(Resolution.X),
 		FText::AsNumber(Resolution.Y),
 		FText::AsNumber(PhysicalWidth),

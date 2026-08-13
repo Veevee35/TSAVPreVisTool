@@ -29,7 +29,7 @@ private:
 	FReply UpdateWall();
 	void ApplySettings(ATSAVLEDWall& Wall) const;
 	void ResizeLayoutData(int32 NewColumns, int32 NewRows);
-	void CyclePanelEdge(int32 Column, int32 Row, bool bReverse);
+	void ApplyPanelStyle(int32 Column, int32 Row, bool bResetToSquare);
 	ATSAVLEDWall* FindSelectedWall() const;
 	bool DoesScreenFitCanvas() const;
 	FIntPoint GetWallResolution() const;
@@ -62,6 +62,7 @@ private:
 	float SubpixelStrength = 1.0f;
 	TArray<float> ColumnAnglesDegrees;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
+	ETSAVLEDPanelEdgeStyle SelectedPanelStyle = ETSAVLEDPanelEdgeStyle::Square;
 	int32 LayoutDataColumns = 8;
 	int32 LayoutDataRows = 4;
 
