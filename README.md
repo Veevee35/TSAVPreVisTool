@@ -10,6 +10,6 @@ Panel definitions store real-world cabinet dimensions and native pixel resolutio
 
 ## GDTF and DMX fixture builder
 
-Open **Tools > TSAV GDTF DMX Fixture Builder** to import a `.gdtf` definition and a fixture model (`.fbx`, `.obj`, `.gltf`, or `.glb`) in one workflow. The tool creates the Unreal DMX fixture type, library, patch, and a functioning fixture actor with configurable base/yoke/head meshes, model scale and rotation, pan/tilt pivots and limits, movement speed, beam orientation, zoom, color, dimmer, and live preview values.
+Open **Tools > TSAV GDTF DMX Fixture Builder** to import a `.gdtf` definition. When the GDTF contains glTF/GLB model resources, the tool extracts them from the archive, imports the referenced meshes, and assigns the base, yoke, head, and lens automatically. FBX, OBJ, glTF, and GLB can still be imported manually when the GDTF has no compatible embedded model. The tool creates the Unreal DMX fixture type, library, patch, and a functioning fixture actor with configurable model scale and rotation, pan/tilt pivots and limits, movement speed, beam orientation, zoom, color, dimmer, and live preview values.
 
 See `Plugins/TSAVLEDTools/README.md` for the short workflow.

@@ -9,6 +9,7 @@
 #include "AssetToolsModule.h"
 #include "DesktopPlatformModule.h"
 #include "DMXGDTF.h"
+#include "DMXZipper.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
 #include "Engine/Selection.h"
@@ -18,6 +19,12 @@
 #include "Framework/Application/SlateApplication.h"
 #include "GDTF/DMXGDTFDescription.h"
 #include "GDTF/DMXGDTFFixtureType.h"
+#include "GDTF/Geometries/DMXGDTFAxisGeometry.h"
+#include "GDTF/Geometries/DMXGDTFBeamGeometry.h"
+#include "GDTF/Geometries/DMXGDTFGeometry.h"
+#include "GDTF/Geometries/DMXGDTFGeometryCollect.h"
+#include "GDTF/Geometries/DMXGDTFGeometryReference.h"
+#include "GDTF/Models/DMXGDTFModel.h"
 #include "GDTF/DMXModes/DMXGDTFChannelFunction.h"
 #include "GDTF/DMXModes/DMXGDTFDMXChannel.h"
 #include "GDTF/DMXModes/DMXGDTFDMXMode.h"
@@ -26,8 +33,10 @@
 #include "LevelEditorViewport.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
+#include "Library/DMXGDTFAssetImportData.h"
 #include "Library/DMXImportGDTF.h"
 #include "Library/DMXLibrary.h"
+#include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
@@ -51,6 +60,15 @@
 
 namespace TSAVDMXFixtureBuilder::Private
 {
+	enum class EFixtureMeshRole : uint8
+	{
+		None,
+		Base,
+		Yoke,
+		Head,
+		Lens
+	};
+
 	FString Canonicalize(const FString& InString)
 	{
 		FString Result = InString.ToLower();
@@ -58,6 +76,208 @@ namespace TSAVDMXFixtureBuilder::Private
 		Result.ReplaceInline(TEXT("-"), TEXT(""));
 		Result.ReplaceInline(TEXT(" "), TEXT(""));
 		return Result;
+	}
+
+	EFixtureMeshRole GetMeshRole(const UE::DMX::GDTF::FDMXGDTFModel& Model)
+	{
+		switch (Model.PrimitiveType)
+		{
+		case EDMXGDTFModelPrimitiveType::Base:
+		case EDMXGDTFModelPrimitiveType::Base1_1:
+			return EFixtureMeshRole::Base;
+		case EDMXGDTFModelPrimitiveType::Yoke:
+			return EFixtureMeshRole::Yoke;
+		case EDMXGDTFModelPrimitiveType::Head:
+			return EFixtureMeshRole::Head;
+		default:
+			break;
+		}
+
+		const FString Name = Canonicalize(Model.Name.ToString() + TEXT("_") + Model.File);
+		if (Name.Contains(TEXT("base")) || Name.Contains(TEXT("body")))
+		{
+			return EFixtureMeshRole::Base;
+		}
+		if (Name.Contains(TEXT("yoke")) || Name.Contains(TEXT("arm")))
+		{
+			return EFixtureMeshRole::Yoke;
+		}
+		if (Name.Contains(TEXT("head")))
+		{
+			return EFixtureMeshRole::Head;
+		}
+		if (Name.Contains(TEXT("lens")) || Name.Contains(TEXT("beam")))
+		{
+			return EFixtureMeshRole::Lens;
+		}
+		return EFixtureMeshRole::None;
+	}
+
+	EFixtureMeshRole GetMeshRole(const UStaticMesh& Mesh)
+	{
+		const FString Name = Canonicalize(Mesh.GetName());
+		if (Name.Contains(TEXT("base")) || Name.Contains(TEXT("body")))
+		{
+			return EFixtureMeshRole::Base;
+		}
+		if (Name.Contains(TEXT("yoke")) || Name.Contains(TEXT("arm")))
+		{
+			return EFixtureMeshRole::Yoke;
+		}
+		if (Name.Contains(TEXT("head")))
+		{
+			return EFixtureMeshRole::Head;
+		}
+		if (Name.Contains(TEXT("lens")) || Name.Contains(TEXT("beam")))
+		{
+			return EFixtureMeshRole::Lens;
+		}
+		return EFixtureMeshRole::None;
+	}
+
+	int32 GetMeshRolePriority(const UStaticMesh& Mesh, EFixtureMeshRole Role)
+	{
+		const FString Name = Canonicalize(Mesh.GetName());
+		switch (Role)
+		{
+		case EFixtureMeshRole::Base:
+			return Name.Contains(TEXT("base")) ? 0 : Name.Contains(TEXT("body")) ? 1 : 2;
+		case EFixtureMeshRole::Yoke:
+			return Name.Contains(TEXT("yoke")) ? 0 : Name.Contains(TEXT("arm")) ? 1 : 2;
+		case EFixtureMeshRole::Head:
+			return Name.Contains(TEXT("head")) ? 0 : 2;
+		case EFixtureMeshRole::Lens:
+			return Name.Contains(TEXT("lens")) ? 0 : Name.Contains(TEXT("beam")) ? 1 : 2;
+		default:
+			return MAX_int32;
+		}
+	}
+
+	FString NormalizeArchivePath(FString Path)
+	{
+		Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+		while (Path.StartsWith(TEXT("./")))
+		{
+			Path.RightChopInline(2);
+		}
+		return Path;
+	}
+
+	bool IsSafeArchivePath(const FString& Path)
+	{
+		if (Path.IsEmpty() || !FPaths::IsRelative(Path) || Path.Contains(TEXT(":")))
+		{
+			return false;
+		}
+
+		TArray<FString> Components;
+		Path.ParseIntoArray(Components, TEXT("/"), true);
+		return !Components.Contains(TEXT(".."));
+	}
+
+	int32 GetEmbeddedModelPriority(const FString& ArchivePath)
+	{
+		const FString Extension = FPaths::GetExtension(ArchivePath).ToLower();
+		if (Extension == TEXT("glb"))
+		{
+			return 0;
+		}
+		if (Extension == TEXT("gltf"))
+		{
+			return 1;
+		}
+		return MAX_int32;
+	}
+
+	TSharedPtr<UE::DMX::GDTF::FDMXGDTFBeamGeometry> FindFirstBeamGeometry(const TSharedPtr<UE::DMX::GDTF::FDMXGDTFGeometry>& Geometry)
+	{
+		using namespace UE::DMX::GDTF;
+		if (!Geometry.IsValid())
+		{
+			return nullptr;
+		}
+		for (const TSharedPtr<FDMXGDTFBeamGeometry>& Beam : Geometry->BeamArray)
+		{
+			if (Beam.IsValid())
+			{
+				return Beam;
+			}
+		}
+		for (const TSharedPtr<FDMXGDTFGeometry>& Child : Geometry->GeometryArray)
+		{
+			if (const TSharedPtr<FDMXGDTFBeamGeometry> Beam = FindFirstBeamGeometry(Child))
+			{
+				return Beam;
+			}
+		}
+		for (const TSharedPtr<FDMXGDTFAxisGeometry>& Axis : Geometry->AxisArray)
+		{
+			if (const TSharedPtr<FDMXGDTFBeamGeometry> Beam = FindFirstBeamGeometry(StaticCastSharedPtr<FDMXGDTFGeometry>(Axis)))
+			{
+				return Beam;
+			}
+		}
+		return nullptr;
+	}
+
+	void GatherGeometryModelRoles(
+		const TSharedPtr<UE::DMX::GDTF::FDMXGDTFGeometry>& Geometry,
+		int32 AxisDepth,
+		TMap<FName, EFixtureMeshRole>& OutRoleByModelName)
+	{
+		using namespace UE::DMX::GDTF;
+		if (!Geometry.IsValid())
+		{
+			return;
+		}
+
+		if (!Geometry->Model.IsEmpty())
+		{
+			const FString GeometryName = Canonicalize(Geometry->Name.ToString());
+			EFixtureMeshRole Role = EFixtureMeshRole::None;
+			if (GeometryName.Contains(TEXT("base")) || GeometryName.Contains(TEXT("body")))
+			{
+				Role = EFixtureMeshRole::Base;
+			}
+			else if (GeometryName.Contains(TEXT("yoke")) || GeometryName.Contains(TEXT("arm")) || GeometryName.Contains(TEXT("pan")))
+			{
+				Role = EFixtureMeshRole::Yoke;
+			}
+			else if (GeometryName.Contains(TEXT("head")) || GeometryName.Contains(TEXT("tilt")))
+			{
+				Role = EFixtureMeshRole::Head;
+			}
+			else if (AxisDepth == 0)
+			{
+				Role = EFixtureMeshRole::Base;
+			}
+			else if (AxisDepth == 1)
+			{
+				Role = EFixtureMeshRole::Yoke;
+			}
+			else
+			{
+				Role = EFixtureMeshRole::Head;
+			}
+
+			OutRoleByModelName.FindOrAdd(FName(*Geometry->Model)) = Role;
+		}
+
+		for (const TSharedPtr<FDMXGDTFBeamGeometry>& Beam : Geometry->BeamArray)
+		{
+			if (Beam.IsValid() && !Beam->Model.IsEmpty())
+			{
+				OutRoleByModelName.FindOrAdd(FName(*Beam->Model)) = EFixtureMeshRole::Lens;
+			}
+		}
+		for (const TSharedPtr<FDMXGDTFGeometry>& Child : Geometry->GeometryArray)
+		{
+			GatherGeometryModelRoles(Child, AxisDepth, OutRoleByModelName);
+		}
+		for (const TSharedPtr<FDMXGDTFAxisGeometry>& Axis : Geometry->AxisArray)
+		{
+			GatherGeometryModelRoles(StaticCastSharedPtr<FDMXGDTFGeometry>(Axis), AxisDepth + 1, OutRoleByModelName);
+		}
 	}
 
 	bool IsAttribute(const FName Attribute, const TCHAR* Prefix)
@@ -192,7 +412,7 @@ namespace TSAVDMXFixtureBuilder::Private
 void STSAVDMXFixtureBuilder::Construct(const FArguments& InArgs)
 {
 	using namespace TSAVDMXFixtureBuilder::Private;
-	StatusMessage = LOCTEXT("Ready", "Choose a GDTF and model to create a fixture.");
+	StatusMessage = LOCTEXT("Ready", "Choose a GDTF. Its embedded glTF model will be imported automatically when available.");
 
 	ChildSlot
 	[
@@ -217,7 +437,7 @@ void STSAVDMXFixtureBuilder::Construct(const FArguments& InArgs)
 					]
 				]
 
-				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step1", "1"), LOCTEXT("GDTFTitle", "GDTF & Mode"), LOCTEXT("GDTFHelp", "Import a .gdtf file or choose one already in the project. The selected mode becomes a real Unreal DMX fixture type and patch."))]
+				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step1", "1"), LOCTEXT("GDTFTitle", "GDTF & Mode"), LOCTEXT("GDTFHelp", "Import a .gdtf file or choose one already in the project. Embedded glTF/GLB models are extracted automatically, and the selected mode becomes a real Unreal DMX fixture type and patch."))]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f)
 				[
 					SNew(SHorizontalBox)
@@ -241,11 +461,12 @@ void STSAVDMXFixtureBuilder::Construct(const FArguments& InArgs)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 14.0f)[SNew(STextBlock).Text(this, &STSAVDMXFixtureBuilder::GetModeSummary).AutoWrapText(true).ColorAndOpacity(FSlateColor::UseSubduedForeground())]
 
-				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step2", "2"), LOCTEXT("ModelTitle", "3D Model"), LOCTEXT("ModelHelp", "Import FBX, OBJ, glTF, or GLB. A single mesh can be the moving head; separate Base, Yoke, and Head meshes provide accurate articulation."))]
+				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step2", "2"), LOCTEXT("ModelTitle", "3D Model"), LOCTEXT("ModelHelp", "Embedded GDTF glTF/GLB models are assigned automatically. Use manual import only as a fallback. Separate Base, Yoke, Head, and Lens meshes provide accurate articulation."))]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f)[SNew(SButton).Text(LOCTEXT("ImportModel", "Import 3D Model…")).HAlign(HAlign_Center).OnClicked(this, &STSAVDMXFixtureBuilder::ImportModel)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("BaseMesh", "Base"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return BaseMesh.IsValid()?BaseMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnBaseMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("YokeMesh", "Yoke"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return YokeMesh.IsValid()?YokeMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnYokeMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("HeadMesh", "Head / full model"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return HeadMesh.IsValid()?HeadMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnHeadMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)[SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.0f,0.0f,8.0f,0.0f)[SNew(STextBlock).Text(LOCTEXT("LensMesh", "Lens / beam"))]+SHorizontalBox::Slot().FillWidth(1.0f)[SNew(SObjectPropertyEntryBox).AllowedClass(UStaticMesh::StaticClass()).ObjectPath_Lambda([this](){return LensMesh.IsValid()?LensMesh->GetPathName():FString();}).OnObjectChanged(this,&STSAVDMXFixtureBuilder::OnLensMeshChanged).DisplayUseSelected(true).DisplayBrowse(true)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f)[MakeFloatField(LOCTEXT("Scale", "Fixture scale"), &FixtureScale, 0.001f, 100.0f)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 14.0f)[MakeRotationField(LOCTEXT("ModelRotation", "Model axis correction"), &ModelRotation)]
 
@@ -258,6 +479,7 @@ void STSAVDMXFixtureBuilder::Construct(const FArguments& InArgs)
 
 				+ SVerticalBox::Slot().AutoHeight()[MakeSectionHeader(LOCTEXT("Step4", "4"), LOCTEXT("BeamTitle", "Beam & DMX Patch"), LOCTEXT("BeamHelp", "Position the lens, set beam output, and choose the local universe and starting address. Dimmer, RGB, Zoom, Pan, and Tilt attributes are detected from GDTF."))]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 6.0f)[MakeVectorField(LOCTEXT("LensOffset", "Lens offset from tilt pivot (cm)"), &LensOffset)]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f)[MakeRotationField(LOCTEXT("LensMeshRotation", "Lens model rotation"), &LensMeshRotation)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f)[MakeRotationField(LOCTEXT("BeamRotation", "Beam direction correction"), &BeamRotation)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f)[SNew(SGridPanel).FillColumn(0,1.0f).FillColumn(1,1.0f)+SGridPanel::Slot(0,0).Padding(0.0f,3.0f,8.0f,3.0f)[MakeFloatField(LOCTEXT("Intensity","Max lumens"),&MaximumIntensity,0.0f,10000000.0f)]+SGridPanel::Slot(1,0).Padding(8.0f,3.0f,0.0f,3.0f)[MakeFloatField(LOCTEXT("Attenuation","Beam distance (cm)"),&AttenuationRadius,1.0f,100000.0f)]+SGridPanel::Slot(0,1).Padding(0.0f,3.0f,8.0f,3.0f)[MakeFloatField(LOCTEXT("MinBeam","Narrow beam °"),&MinimumBeamAngle,1.0f,89.0f)]+SGridPanel::Slot(1,1).Padding(8.0f,3.0f,0.0f,3.0f)[MakeFloatField(LOCTEXT("MaxBeam","Wide beam °"),&MaximumBeamAngle,1.0f,89.0f)]+SGridPanel::Slot(0,2).Padding(0.0f,3.0f,8.0f,3.0f)[MakeIntField(LOCTEXT("Universe","Universe"),&Universe,0,63999)]+SGridPanel::Slot(1,2).Padding(8.0f,3.0f,0.0f,3.0f)[MakeIntField(LOCTEXT("Address","Starting address"),&Address,1,512)]]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f, 0.0f, 14.0f)[SNew(STextBlock).Text(this,&STSAVDMXFixtureBuilder::GetValidationText).AutoWrapText(true).ColorAndOpacity_Lambda([this](){return CanCreateFixture()?FLinearColor(0.15f,0.8f,0.35f):FLinearColor(0.9f,0.2f,0.15f);})]
@@ -310,7 +532,11 @@ FReply STSAVDMXFixtureBuilder::ImportGDTF()
 			GDTFSource = ImportedGDTF;
 			RefreshGDTFModes(true);
 			FixtureName = FPaths::GetBaseFilename(Files[0]);
-			SetStatus(FText::Format(LOCTEXT("GDTFImported", "Imported GDTF: {0}"), FText::FromString(ImportedGDTF->GetName())), true);
+			FText EmbeddedModelResult;
+			const int32 NumEmbeddedMeshes = ImportEmbeddedGDTFModels(EmbeddedModelResult);
+			SetStatus(
+				FText::Format(LOCTEXT("GDTFImported", "Imported GDTF: {0}. {1}"), FText::FromString(ImportedGDTF->GetName()), EmbeddedModelResult),
+				NumEmbeddedMeshes >= 0);
 			return FReply::Handled();
 		}
 	}
@@ -359,9 +585,10 @@ FReply STSAVDMXFixtureBuilder::ImportModel()
 		const FString Name = Mesh->GetName().ToLower();
 		if (!BaseMesh.IsValid() && (Name.Contains(TEXT("base")) || Name.Contains(TEXT("body")))) BaseMesh = Mesh;
 		else if (!YokeMesh.IsValid() && (Name.Contains(TEXT("yoke")) || Name.Contains(TEXT("arm")))) YokeMesh = Mesh;
-		else if (!HeadMesh.IsValid() && (Name.Contains(TEXT("head")) || Name.Contains(TEXT("lens")))) HeadMesh = Mesh;
+		else if (!HeadMesh.IsValid() && Name.Contains(TEXT("head"))) HeadMesh = Mesh;
+		else if (!LensMesh.IsValid() && (Name.Contains(TEXT("lens")) || Name.Contains(TEXT("beam")))) LensMesh = Mesh;
 	}
-	if (!ImportedMeshes.IsEmpty() && !HeadMesh.IsValid())
+	if (!ImportedMeshes.IsEmpty() && !BaseMesh.IsValid() && !YokeMesh.IsValid() && !HeadMesh.IsValid() && !LensMesh.IsValid())
 	{
 		HeadMesh = ImportedMeshes.Last();
 	}
@@ -372,20 +599,384 @@ FReply STSAVDMXFixtureBuilder::ImportModel()
 	}
 	else
 	{
-		SetStatus(FText::Format(LOCTEXT("ModelImported", "Imported {0} mesh asset(s). Review the Base, Yoke, and Head assignments below."), FText::AsNumber(ImportedMeshes.Num())), true);
+		SetStatus(FText::Format(LOCTEXT("ModelImported", "Imported {0} mesh asset(s). Review the Base, Yoke, Head, and Lens assignments below."), FText::AsNumber(ImportedMeshes.Num())), true);
 	}
 	return FReply::Handled();
+}
+
+int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
+{
+	using namespace TSAVDMXFixtureBuilder::Private;
+	using namespace UE::DMX::GDTF;
+
+	if (!GDTFSource.IsValid() || !GDTFSource->GetGDTFAssetImportData())
+	{
+		OutResultMessage = LOCTEXT("NoEmbeddedModelSource", "The GDTF source archive is unavailable, so its model could not be inspected.");
+		return -1;
+	}
+
+	const TArray64<uint8>& RawSourceData = GDTFSource->GetGDTFAssetImportData()->GetRawSourceData();
+	const TSharedRef<FDMXZipper> Zip = MakeShared<FDMXZipper>();
+	if (RawSourceData.IsEmpty() || !Zip->LoadFromData(RawSourceData))
+	{
+		OutResultMessage = LOCTEXT("InvalidEmbeddedModelArchive", "The stored GDTF archive could not be opened to inspect its model.");
+		return -1;
+	}
+
+	UDMXGDTF* GDTF = GDTFSource->LoadGDTF();
+	const TSharedPtr<FDMXGDTFFixtureType> FixtureType = GDTF && GDTF->GetDescription().IsValid() ? GDTF->GetDescription()->GetFixtureType() : nullptr;
+	if (!FixtureType.IsValid())
+	{
+		OutResultMessage = LOCTEXT("InvalidEmbeddedModelDescription", "The GDTF description is invalid, so its model could not be matched to fixture parts.");
+		return -1;
+	}
+
+	const FString GltfPrefix = TEXT("models/gltf/");
+	TMap<FString, FString> BestArchiveByRelativeStem;
+	TArray<FString> GltfResources;
+	bool bHasLegacy3DSModel = false;
+	for (const FString& File : Zip->GetFiles())
+	{
+		const FString ArchivePath = NormalizeArchivePath(File);
+		if (!IsSafeArchivePath(ArchivePath))
+		{
+			continue;
+		}
+
+		if (ArchivePath.StartsWith(TEXT("models/3ds/"), ESearchCase::IgnoreCase) && FPaths::GetExtension(ArchivePath).Equals(TEXT("3ds"), ESearchCase::IgnoreCase))
+		{
+			bHasLegacy3DSModel = true;
+		}
+
+		if (!ArchivePath.StartsWith(GltfPrefix, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		GltfResources.Add(ArchivePath);
+		const int32 Priority = GetEmbeddedModelPriority(ArchivePath);
+		if (Priority == MAX_int32)
+		{
+			continue;
+		}
+
+		FString RelativeStem = FPaths::ChangeExtension(ArchivePath.Mid(GltfPrefix.Len()), TEXT(""));
+		RelativeStem.RemoveFromEnd(TEXT("."));
+		RelativeStem.ToLowerInline();
+		if (const FString* ExistingPath = BestArchiveByRelativeStem.Find(RelativeStem))
+		{
+			if (Priority < GetEmbeddedModelPriority(*ExistingPath))
+			{
+				BestArchiveByRelativeStem[RelativeStem] = ArchivePath;
+			}
+		}
+		else
+		{
+			BestArchiveByRelativeStem.Add(RelativeStem, ArchivePath);
+		}
+	}
+
+	if (BestArchiveByRelativeStem.IsEmpty())
+	{
+		OutResultMessage = bHasLegacy3DSModel
+			? LOCTEXT("LegacyEmbeddedModel", "This GDTF only contains a legacy 3DS model, which Unreal cannot import directly. Convert it to glTF/GLB or use manual model import.")
+			: LOCTEXT("NoEmbeddedModel", "No embedded glTF/GLB model was found; a model can still be assigned manually.");
+		return 0;
+	}
+
+	TMap<FString, FString> ArchivePathByKey;
+	TMap<FString, TArray<TSharedPtr<FDMXGDTFModel>>> ModelsByArchiveKey;
+	TSet<FName> ReferencedModelNames;
+	TMap<FName, EFixtureMeshRole> RoleByModelName;
+	if (FixtureType->GeometryCollect.IsValid())
+	{
+		for (const TSharedPtr<FDMXGDTFGeometry>& RootGeometry : FixtureType->GeometryCollect->GeometryArray)
+		{
+			GatherGeometryModelRoles(RootGeometry, 0, RoleByModelName);
+		}
+		for (const TSharedPtr<FDMXGDTFAxisGeometry>& RootAxis : FixtureType->GeometryCollect->AxisArray)
+		{
+			GatherGeometryModelRoles(StaticCastSharedPtr<FDMXGDTFGeometry>(RootAxis), 1, RoleByModelName);
+		}
+
+		TArray<TSharedPtr<FDMXGDTFGeometry>> Geometries;
+		TArray<TSharedPtr<FDMXGDTFGeometryReference>> GeometryReferences;
+		FixtureType->GeometryCollect->GetGeometriesRecursive(Geometries, GeometryReferences);
+		for (const TSharedPtr<FDMXGDTFGeometry>& Geometry : Geometries)
+		{
+			if (Geometry.IsValid() && !Geometry->Model.IsEmpty())
+			{
+				ReferencedModelNames.Add(FName(*Geometry->Model));
+			}
+		}
+	}
+
+	for (const TSharedPtr<FDMXGDTFModel>& Model : FixtureType->Models)
+	{
+		if (!Model.IsValid() || Model->File.IsEmpty() || (!ReferencedModelNames.IsEmpty() && !ReferencedModelNames.Contains(Model->Name)))
+		{
+			continue;
+		}
+
+		FString ModelStem = NormalizeArchivePath(Model->File);
+		ModelStem = FPaths::ChangeExtension(ModelStem, TEXT(""));
+		ModelStem.RemoveFromEnd(TEXT("."));
+		ModelStem.ToLowerInline();
+
+		const FString* ArchivePath = BestArchiveByRelativeStem.Find(ModelStem);
+		if (!ArchivePath)
+		{
+			const FString ModelBaseName = FPaths::GetBaseFilename(ModelStem);
+			for (const TPair<FString, FString>& Pair : BestArchiveByRelativeStem)
+			{
+				if (FPaths::GetBaseFilename(Pair.Key).Equals(ModelBaseName, ESearchCase::IgnoreCase))
+				{
+					ArchivePath = &Pair.Value;
+					break;
+				}
+			}
+		}
+
+		if (ArchivePath)
+		{
+			const FString ArchiveKey = ArchivePath->ToLower();
+			ArchivePathByKey.FindOrAdd(ArchiveKey) = *ArchivePath;
+			ModelsByArchiveKey.FindOrAdd(ArchiveKey).Add(Model);
+		}
+	}
+
+	// Some producers omit the Model.File link even though valid model resources are present.
+	if (ArchivePathByKey.IsEmpty())
+	{
+		for (const TPair<FString, FString>& Pair : BestArchiveByRelativeStem)
+		{
+			ArchivePathByKey.Add(Pair.Value.ToLower(), Pair.Value);
+		}
+	}
+
+	const FString ExtractionRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+		FPaths::ProjectSavedDir(),
+		TEXT("TSAV/GDTFModels"),
+		ObjectTools::SanitizeObjectName(GDTFSource->GetName())));
+	IFileManager::Get().MakeDirectory(*ExtractionRoot, true);
+
+	TMap<FString, FString> ExtractedPathByArchiveKey;
+	for (const FString& ArchivePath : GltfResources)
+	{
+		TArray64<uint8> FileData;
+		if (!Zip->GetFileContent(ArchivePath, FileData))
+		{
+			continue;
+		}
+
+		const FString ExtractedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ExtractionRoot, ArchivePath));
+		if (!ExtractedPath.StartsWith(ExtractionRoot, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(ExtractedPath), true);
+		if (FFileHelper::SaveArrayToFile(FileData, *ExtractedPath))
+		{
+			ExtractedPathByArchiveKey.Add(ArchivePath.ToLower(), ExtractedPath);
+		}
+	}
+
+	TArray<UAssetImportTask*> ImportTasks;
+	TMap<UAssetImportTask*, FString> ArchiveKeyByTask;
+	const FString DestinationPath = TEXT("/Game/TSAV/Fixtures/Models/") + ObjectTools::SanitizeObjectName(GDTFSource->GetName());
+	for (const TPair<FString, FString>& Pair : ArchivePathByKey)
+	{
+		const FString* ExtractedPath = ExtractedPathByArchiveKey.Find(Pair.Key);
+		if (!ExtractedPath)
+		{
+			continue;
+		}
+
+		UAssetImportTask* Task = NewObject<UAssetImportTask>();
+		Task->Filename = *ExtractedPath;
+		Task->DestinationPath = DestinationPath;
+		Task->bAutomated = true;
+		Task->bSave = true;
+		Task->bAsync = false;
+		Task->bReplaceExisting = true;
+		ImportTasks.Add(Task);
+		ArchiveKeyByTask.Add(Task, Pair.Key);
+	}
+
+	if (ImportTasks.IsEmpty())
+	{
+		OutResultMessage = LOCTEXT("EmbeddedModelExtractionFailed", "Embedded model resources were found but could not be extracted safely.");
+		return -1;
+	}
+
+	FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get().ImportAssetTasks(ImportTasks);
+
+	UStaticMesh* ImportedBase = nullptr;
+	UStaticMesh* ImportedYoke = nullptr;
+	UStaticMesh* ImportedHead = nullptr;
+	UStaticMesh* ImportedLens = nullptr;
+	int32 ImportedBasePriority = MAX_int32;
+	int32 ImportedYokePriority = MAX_int32;
+	int32 ImportedHeadPriority = MAX_int32;
+	int32 ImportedLensPriority = MAX_int32;
+	TArray<UStaticMesh*> AllImportedMeshes;
+	TSet<UStaticMesh*> AssignedMeshes;
+	auto GetRoleForModel = [&RoleByModelName](const FDMXGDTFModel& Model)
+	{
+		const EFixtureMeshRole NamedRole = GetMeshRole(Model);
+		if (NamedRole != EFixtureMeshRole::None)
+		{
+			return NamedRole;
+		}
+		if (const EFixtureMeshRole* GeometryRole = RoleByModelName.Find(Model.Name))
+		{
+			return *GeometryRole;
+		}
+		return EFixtureMeshRole::None;
+	};
+	auto AssignMesh = [&ImportedBase, &ImportedYoke, &ImportedHead, &ImportedLens, &ImportedBasePriority, &ImportedYokePriority, &ImportedHeadPriority, &ImportedLensPriority, &AssignedMeshes](UStaticMesh* Mesh, EFixtureMeshRole Role)
+	{
+		if (!Mesh)
+		{
+			return;
+		}
+
+		UStaticMesh** Destination = nullptr;
+		int32* DestinationPriority = nullptr;
+		switch (Role)
+		{
+		case EFixtureMeshRole::Base: Destination = &ImportedBase; DestinationPriority = &ImportedBasePriority; break;
+		case EFixtureMeshRole::Yoke: Destination = &ImportedYoke; DestinationPriority = &ImportedYokePriority; break;
+		case EFixtureMeshRole::Head: Destination = &ImportedHead; DestinationPriority = &ImportedHeadPriority; break;
+		case EFixtureMeshRole::Lens: Destination = &ImportedLens; DestinationPriority = &ImportedLensPriority; break;
+		default: break;
+		}
+		const int32 Priority = GetMeshRolePriority(*Mesh, Role);
+		if (Destination && DestinationPriority && (!*Destination || Priority < *DestinationPriority))
+		{
+			AssignedMeshes.Remove(*Destination);
+			*Destination = Mesh;
+			*DestinationPriority = Priority;
+			AssignedMeshes.Add(Mesh);
+		}
+	};
+
+	for (UAssetImportTask* Task : ImportTasks)
+	{
+		TArray<UStaticMesh*> TaskMeshes;
+		for (UObject* Object : Task->GetObjects())
+		{
+			if (UStaticMesh* Mesh = Cast<UStaticMesh>(Object))
+			{
+				TaskMeshes.Add(Mesh);
+				AllImportedMeshes.AddUnique(Mesh);
+			}
+		}
+
+		const FString* ArchiveKey = ArchiveKeyByTask.Find(Task);
+		const TArray<TSharedPtr<FDMXGDTFModel>>* LinkedModels = ArchiveKey ? ModelsByArchiveKey.Find(*ArchiveKey) : nullptr;
+		for (int32 MeshIndex = 0; MeshIndex < TaskMeshes.Num(); ++MeshIndex)
+		{
+			UStaticMesh* Mesh = TaskMeshes[MeshIndex];
+			EFixtureMeshRole Role = GetMeshRole(*Mesh);
+
+			if (Role == EFixtureMeshRole::None && LinkedModels)
+			{
+				const FString MeshName = Canonicalize(Mesh->GetName());
+				for (const TSharedPtr<FDMXGDTFModel>& Model : *LinkedModels)
+				{
+					if (Model.IsValid() && MeshName.Contains(Canonicalize(Model->Name.ToString())))
+					{
+						Role = GetRoleForModel(*Model);
+						if (Role != EFixtureMeshRole::None)
+						{
+							break;
+						}
+					}
+				}
+			}
+
+			if (Role == EFixtureMeshRole::None && LinkedModels && TaskMeshes.Num() == LinkedModels->Num() && LinkedModels->IsValidIndex(MeshIndex) && (*LinkedModels)[MeshIndex].IsValid())
+			{
+				Role = GetRoleForModel(*(*LinkedModels)[MeshIndex]);
+			}
+
+			if (Role == EFixtureMeshRole::None && LinkedModels && TaskMeshes.Num() == 1)
+			{
+				EFixtureMeshRole OnlyRole = EFixtureMeshRole::None;
+				bool bAmbiguousRole = false;
+				for (const TSharedPtr<FDMXGDTFModel>& Model : *LinkedModels)
+				{
+					const EFixtureMeshRole CandidateRole = Model.IsValid() ? GetRoleForModel(*Model) : EFixtureMeshRole::None;
+					if (CandidateRole == EFixtureMeshRole::None)
+					{
+						continue;
+					}
+					if (OnlyRole != EFixtureMeshRole::None && CandidateRole != OnlyRole)
+					{
+						bAmbiguousRole = true;
+						break;
+					}
+					OnlyRole = CandidateRole;
+				}
+				if (!bAmbiguousRole)
+				{
+					Role = OnlyRole;
+				}
+			}
+
+			AssignMesh(Mesh, Role);
+		}
+	}
+
+	if (AllImportedMeshes.IsEmpty())
+	{
+		OutResultMessage = LOCTEXT("EmbeddedModelImportFailed", "An embedded glTF/GLB model was extracted, but Unreal did not create a Static Mesh from it.");
+		return -1;
+	}
+
+	if (!ImportedHead)
+	{
+		for (int32 Index = AllImportedMeshes.Num() - 1; Index >= 0; --Index)
+		{
+			if (!AssignedMeshes.Contains(AllImportedMeshes[Index]))
+			{
+				ImportedHead = AllImportedMeshes[Index];
+				break;
+			}
+		}
+	}
+	if (!ImportedBase && !ImportedYoke && !ImportedHead && !ImportedLens)
+	{
+		ImportedHead = AllImportedMeshes.Last();
+	}
+
+	BaseMesh = ImportedBase;
+	YokeMesh = ImportedYoke;
+	HeadMesh = ImportedHead;
+	LensMesh = ImportedLens;
+	OutResultMessage = FText::Format(
+		LOCTEXT("EmbeddedModelImported", "Imported {0} embedded Static Mesh asset(s) and assigned the physical fixture parts automatically."),
+		FText::AsNumber(AllImportedMeshes.Num()));
+	return AllImportedMeshes.Num();
 }
 
 void STSAVDMXFixtureBuilder::OnGDTFChanged(const FAssetData& AssetData)
 {
 	GDTFSource = Cast<UDMXImportGDTF>(AssetData.GetAsset());
 	RefreshGDTFModes(true);
+	if (GDTFSource.IsValid())
+	{
+		FText EmbeddedModelResult;
+		const int32 NumEmbeddedMeshes = ImportEmbeddedGDTFModels(EmbeddedModelResult);
+		SetStatus(EmbeddedModelResult, NumEmbeddedMeshes >= 0);
+	}
 }
 
 void STSAVDMXFixtureBuilder::OnBaseMeshChanged(const FAssetData& AssetData) { BaseMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
 void STSAVDMXFixtureBuilder::OnYokeMeshChanged(const FAssetData& AssetData) { YokeMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
 void STSAVDMXFixtureBuilder::OnHeadMeshChanged(const FAssetData& AssetData) { HeadMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
+void STSAVDMXFixtureBuilder::OnLensMeshChanged(const FAssetData& AssetData) { LensMesh = Cast<UStaticMesh>(AssetData.GetAsset()); }
 
 void STSAVDMXFixtureBuilder::RefreshGDTFModes(bool bAdoptPhysicalMotion)
 {
@@ -402,7 +993,15 @@ void STSAVDMXFixtureBuilder::RefreshGDTFModes(bool bAdoptPhysicalMotion)
 		ModeCombo->SetSelectedItem(SelectedMode);
 	}
 
-	if (!bAdoptPhysicalMotion || !GDTFSource.IsValid())
+	if (bAdoptPhysicalMotion)
+	{
+		AdoptSelectedModePhysicalProperties();
+	}
+}
+
+void STSAVDMXFixtureBuilder::AdoptSelectedModePhysicalProperties()
+{
+	if (!GDTFSource.IsValid())
 	{
 		return;
 	}
@@ -414,7 +1013,11 @@ void STSAVDMXFixtureBuilder::RefreshGDTFModes(bool bAdoptPhysicalMotion)
 		return;
 	}
 
-	for (const TSharedPtr<UE::DMX::GDTF::FDMXGDTFDMXChannel>& Channel : FixtureType->DMXModes[0]->DMXChannels)
+	const TSharedPtr<UE::DMX::GDTF::FDMXGDTFDMXMode> GDTFMode = FixtureType->DMXModes[FMath::Clamp(GetSelectedModeIndex(), 0, FixtureType->DMXModes.Num() - 1)];
+	TSharedPtr<UE::DMX::GDTF::FDMXGDTFGeometry> PanGeometry;
+	TSharedPtr<UE::DMX::GDTF::FDMXGDTFGeometry> TiltGeometry;
+	bool bAdoptedZoomRange = false;
+	for (const TSharedPtr<UE::DMX::GDTF::FDMXGDTFDMXChannel>& Channel : GDTFMode->DMXChannels)
 	{
 		if (!Channel.IsValid() || Channel->LogicalChannelArray.IsEmpty() || !Channel->LogicalChannelArray[0].IsValid()) continue;
 		const FName Attribute = Channel->LogicalChannelArray[0]->Attribute;
@@ -424,11 +1027,55 @@ void STSAVDMXFixtureBuilder::RefreshGDTFModes(bool bAdoptPhysicalMotion)
 		{
 			PanMin = Function->PhysicalFrom; PanMax = Function->PhysicalTo;
 			if (Function->RealFade > 0.01f) PanSpeed = FMath::Abs(PanMax - PanMin) / Function->RealFade;
+			PanGeometry = Channel->ResolveGeometry();
 		}
 		else if (TSAVDMXFixtureBuilder::Private::IsAttribute(Attribute, TEXT("tilt")))
 		{
 			TiltMin = Function->PhysicalFrom; TiltMax = Function->PhysicalTo;
 			if (Function->RealFade > 0.01f) TiltSpeed = FMath::Abs(TiltMax - TiltMin) / Function->RealFade;
+			TiltGeometry = Channel->ResolveGeometry();
+		}
+		else if (TSAVDMXFixtureBuilder::Private::IsAttribute(Attribute, TEXT("zoom")))
+		{
+			const float HalfAngleFrom = FMath::Abs(Function->PhysicalFrom) * 0.5f;
+			const float HalfAngleTo = FMath::Abs(Function->PhysicalTo) * 0.5f;
+			MinimumBeamAngle = FMath::Clamp(FMath::Min(HalfAngleFrom, HalfAngleTo), 1.0f, 89.0f);
+			MaximumBeamAngle = FMath::Clamp(FMath::Max(HalfAngleFrom, HalfAngleTo), MinimumBeamAngle, 89.0f);
+			bAdoptedZoomRange = true;
+		}
+	}
+
+	// GDTF geometry matrices and model dimensions are expressed in meters, while Unreal uses centimeters.
+	constexpr float MetersToCentimeters = 100.0f;
+	if (PanGeometry.IsValid())
+	{
+		PanPivotOffset = PanGeometry->Position.GetTranslation() * MetersToCentimeters;
+	}
+	if (TiltGeometry.IsValid())
+	{
+		TiltPivotOffset = TiltGeometry->Position.GetTranslation() * MetersToCentimeters;
+	}
+
+	const TSharedPtr<UE::DMX::GDTF::FDMXGDTFBeamGeometry> BeamGeometry = TSAVDMXFixtureBuilder::Private::FindFirstBeamGeometry(GDTFMode->ResolveGeometry());
+	if (BeamGeometry.IsValid())
+	{
+		LensOffset = BeamGeometry->Position.GetTranslation() * MetersToCentimeters;
+		LensMeshRotation = BeamGeometry->Position.GetRotation().Rotator();
+		const FVector BeamDirection = BeamGeometry->Position.GetRotation().RotateVector(FVector(0.0f, -1.0f, 0.0f));
+		if (!BeamDirection.IsNearlyZero())
+		{
+			BeamRotation = FRotationMatrix::MakeFromX(BeamDirection).Rotator();
+		}
+		if (BeamGeometry->LuminousFlux > 0.0f)
+		{
+			MaximumIntensity = BeamGeometry->LuminousFlux;
+		}
+		if (!bAdoptedZoomRange)
+		{
+			const float HalfBeamAngle = FMath::Max(BeamGeometry->BeamAngle * 0.5f, 1.0f);
+			const float HalfFieldAngle = FMath::Max(BeamGeometry->FieldAngle * 0.5f, HalfBeamAngle);
+			MinimumBeamAngle = FMath::Clamp(HalfBeamAngle, 1.0f, 89.0f);
+			MaximumBeamAngle = FMath::Clamp(HalfFieldAngle, MinimumBeamAngle, 89.0f);
 		}
 	}
 }
@@ -436,6 +1083,10 @@ void STSAVDMXFixtureBuilder::RefreshGDTFModes(bool bAdoptPhysicalMotion)
 void STSAVDMXFixtureBuilder::OnModeSelected(TSharedPtr<FString> NewMode, ESelectInfo::Type SelectInfo)
 {
 	SelectedMode = NewMode;
+	if (SelectInfo != ESelectInfo::Direct)
+	{
+		AdoptSelectedModePhysicalProperties();
+	}
 }
 
 TSharedRef<SWidget> STSAVDMXFixtureBuilder::GenerateModeWidget(TSharedPtr<FString> Mode) const
@@ -503,13 +1154,13 @@ int32 STSAVDMXFixtureBuilder::GetSelectedModeChannelSpan() const
 bool STSAVDMXFixtureBuilder::CanCreateFixture() const
 {
 	const int32 Span = GetSelectedModeChannelSpan();
-	return GDTFSource.IsValid() && (BaseMesh.IsValid() || YokeMesh.IsValid() || HeadMesh.IsValid()) && Span > 0 && Address >= 1 && Address + Span - 1 <= 512 && PanMin < PanMax && TiltMin < TiltMax;
+	return GDTFSource.IsValid() && (BaseMesh.IsValid() || YokeMesh.IsValid() || HeadMesh.IsValid() || LensMesh.IsValid()) && Span > 0 && Address >= 1 && Address + Span - 1 <= 512 && PanMin < PanMax && TiltMin < TiltMax;
 }
 
 FText STSAVDMXFixtureBuilder::GetValidationText() const
 {
 	if (!GDTFSource.IsValid()) return LOCTEXT("NeedGDTF", "Import or select a GDTF fixture definition.");
-	if (!BaseMesh.IsValid() && !YokeMesh.IsValid() && !HeadMesh.IsValid()) return LOCTEXT("NeedMesh", "Import or select at least one Static Mesh.");
+	if (!BaseMesh.IsValid() && !YokeMesh.IsValid() && !HeadMesh.IsValid() && !LensMesh.IsValid()) return LOCTEXT("NeedMesh", "Import or select at least one Static Mesh.");
 	const int32 Span = GetSelectedModeChannelSpan();
 	if (Span <= 0) return LOCTEXT("NeedChannels", "The selected GDTF mode has no usable DMX channels.");
 	if (Address + Span - 1 > 512) return FText::Format(LOCTEXT("PatchOverflow", "Patch does not fit: address {0} plus {1} channels exceeds 512."), FText::AsNumber(Address), FText::AsNumber(Span));
@@ -622,11 +1273,13 @@ void STSAVDMXFixtureBuilder::ApplySettings(ATSAVDMXFixture& Fixture, UDMXEntityF
 	Fixture.BaseMesh = BaseMesh.Get();
 	Fixture.YokeMesh = YokeMesh.Get();
 	Fixture.HeadMesh = HeadMesh.Get();
+	Fixture.LensMesh = LensMesh.Get();
 	Fixture.FixtureScale = FMath::Max(FixtureScale, 0.001f);
 	Fixture.ModelRotation = ModelRotation;
 	Fixture.PanPivotOffset = PanPivotOffset;
 	Fixture.TiltPivotOffset = TiltPivotOffset;
 	Fixture.LensOffset = LensOffset;
+	Fixture.LensMeshRotation = LensMeshRotation;
 	Fixture.BeamRotation = BeamRotation;
 	Fixture.PanMinDegrees = PanMin;
 	Fixture.PanMaxDegrees = PanMax;
@@ -753,11 +1406,13 @@ FReply STSAVDMXFixtureBuilder::LoadSelectedFixture()
 	BaseMesh = Fixture->BaseMesh;
 	YokeMesh = Fixture->YokeMesh;
 	HeadMesh = Fixture->HeadMesh;
+	LensMesh = Fixture->LensMesh;
 	FixtureScale = Fixture->FixtureScale;
 	ModelRotation = Fixture->ModelRotation;
 	PanPivotOffset = Fixture->PanPivotOffset;
 	TiltPivotOffset = Fixture->TiltPivotOffset;
 	LensOffset = Fixture->LensOffset;
+	LensMeshRotation = Fixture->LensMeshRotation;
 	BeamRotation = Fixture->BeamRotation;
 	PanMin = Fixture->PanMinDegrees;
 	PanMax = Fixture->PanMaxDegrees;

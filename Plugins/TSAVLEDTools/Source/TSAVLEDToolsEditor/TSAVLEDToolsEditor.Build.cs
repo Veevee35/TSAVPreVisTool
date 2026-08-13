@@ -19,6 +19,7 @@ public class TSAVLEDToolsEditor : ModuleRules
 				"DMXGDTF",
 				"DMXProtocol",
 				"DMXRuntime",
+				"DMXZip",
 				"Engine",
 				"InputCore",
 				"LevelEditor",

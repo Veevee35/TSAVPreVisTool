@@ -7,7 +7,7 @@ This plugin provides a guided editor builder, a cabinet definition, and two plac
 - **TSAV LED Panel Definition** — a reusable cabinet model containing physical width, height, depth, bezel, and native X/Y pixel resolution.
 - **TSAV LED Panel** — one custom cabinet that can use a definition asset or instance-specific physical and pixel dimensions.
 - **TSAV LED Wall Builder** — a parametric wall that links one cabinet definition into rows and columns, generates cabinet signal order, and calculates the screen's native resolution.
-- **TSAV GDTF DMX Fixture Builder** — imports a GDTF definition and 3D model, creates a DMX library/type/patch, and places an articulated, DMX-driven fixture.
+- **TSAV GDTF DMX Fixture Builder** — imports a GDTF definition, automatically extracts and assigns its embedded glTF/GLB model when present, creates a DMX library/type/patch, and places an articulated, DMX-driven fixture.
 
 Both actors expose a **Media Source** field under **TSAV LED > Media**. Assign an NDI Media Source asset there to route that feed to the surface. Under **TSAV LED > Canvas**, set the processor canvas size and the top-left pixel coordinate for that screen. The bundled material crops the Media/NDI texture to that exact rectangle.
 
@@ -39,7 +39,7 @@ The material exposes `MediaTexture`, `EmissiveStrength`, `CanvasScaleX/Y`, `Canv
 
 1. Enable Unreal's DMX Engine and GDTF support, restart the editor, then open **Tools > TSAV GDTF DMX Fixture Builder**.
 2. Choose the `.gdtf` file and select its operating mode.
-3. Import a fixture model (`.fbx`, `.obj`, `.gltf`, or `.glb`) and assign its meshes to Base, Yoke, and Head. A single imported mesh can be used for a static fixture; separate meshes are recommended for moving heads.
-4. Set model scale/rotation, pan and tilt pivot offsets, lens position, movement limits/speed, beam direction, zoom range, and maximum intensity.
+3. If the GDTF contains glTF/GLB resources, confirm the automatically imported Base, Yoke, Head, and Lens assignments. Otherwise import a fixture model (`.fbx`, `.obj`, `.gltf`, or `.glb`) manually. A single imported mesh can be used for a static fixture; separate meshes are recommended for moving heads. Legacy 3DS-only GDTFs require conversion to glTF/GLB first.
+4. Review the GDTF-derived pivot positions, motion limits/speeds, lens transform, beam direction, zoom range, and maximum intensity; adjust them only when the source data needs correction.
 5. Set the DMX universe and address, then click **Create Fixture**. The tool creates the DMX Library, Fixture Type, Fixture Patch, and linked actor.
 6. Use the preview controls to check pan/tilt and beam alignment. Select the fixture later and click **Load Selected Fixture** to adjust or repatch it.

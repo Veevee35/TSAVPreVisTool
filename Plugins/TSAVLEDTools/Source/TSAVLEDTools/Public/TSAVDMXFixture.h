@@ -47,6 +47,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
 	TObjectPtr<UStaticMesh> HeadMesh;
 
+	/** Optional lens/beam geometry from the GDTF model. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
+	TObjectPtr<UStaticMesh> LensMesh;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model", meta = (ClampMin = "0.001", UIMin = "0.01", UIMax = "10.0"))
 	float FixtureScale = 1.0f;
 
@@ -106,6 +110,10 @@ public:
 	/** Lens/beam origin relative to the head pivot, in centimeters. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Beam")
 	FVector LensOffset = FVector(20.0f, 0.0f, 0.0f);
+
+	/** Orientation of the physical lens model from the GDTF beam geometry. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Beam")
+	FRotator LensMeshRotation = FRotator::ZeroRotator;
 
 	/** Corrects beam direction. Unreal spot lights point along local +X. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Beam")
@@ -225,6 +233,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category = "TSAV Fixture|Components")
 	TObjectPtr<USceneComponent> LensRoot;
+
+	UPROPERTY(VisibleAnywhere, Category = "TSAV Fixture|Components")
+	TObjectPtr<UStaticMeshComponent> LensVisual;
 
 	UPROPERTY(VisibleAnywhere, Category = "TSAV Fixture|Components")
 	TObjectPtr<USpotLightComponent> BeamLight;

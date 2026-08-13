@@ -35,7 +35,10 @@ private:
 	void OnBaseMeshChanged(const FAssetData& AssetData);
 	void OnYokeMeshChanged(const FAssetData& AssetData);
 	void OnHeadMeshChanged(const FAssetData& AssetData);
+	void OnLensMeshChanged(const FAssetData& AssetData);
+	int32 ImportEmbeddedGDTFModels(FText& OutResultMessage);
 	void RefreshGDTFModes(bool bAdoptPhysicalMotion);
+	void AdoptSelectedModePhysicalProperties();
 	void OnModeSelected(TSharedPtr<FString> NewMode, ESelectInfo::Type SelectInfo);
 	TSharedRef<SWidget> GenerateModeWidget(TSharedPtr<FString> Mode) const;
 
@@ -58,6 +61,7 @@ private:
 	FVector PanPivotOffset = FVector::ZeroVector;
 	FVector TiltPivotOffset = FVector(0.0f, 0.0f, 40.0f);
 	FVector LensOffset = FVector(20.0f, 0.0f, 0.0f);
+	FRotator LensMeshRotation = FRotator::ZeroRotator;
 	FRotator BeamRotation = FRotator::ZeroRotator;
 	float PanMin = -270.0f;
 	float PanMax = 270.0f;
@@ -82,6 +86,7 @@ private:
 	TWeakObjectPtr<UStaticMesh> BaseMesh;
 	TWeakObjectPtr<UStaticMesh> YokeMesh;
 	TWeakObjectPtr<UStaticMesh> HeadMesh;
+	TWeakObjectPtr<UStaticMesh> LensMesh;
 	TWeakObjectPtr<ATSAVDMXFixture> ActiveFixture;
 
 	TArray<FDMXFixtureMode> ParsedModes;

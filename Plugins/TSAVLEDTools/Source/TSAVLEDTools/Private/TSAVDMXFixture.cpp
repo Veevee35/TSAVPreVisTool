@@ -41,6 +41,9 @@ ATSAVDMXFixture::ATSAVDMXFixture()
 	LensRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Lens Root"));
 	LensRoot->SetupAttachment(TiltPivot);
 
+	LensVisual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Lens Mesh"));
+	LensVisual->SetupAttachment(TiltPivot);
+
 	BeamLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("Beam Light"));
 	BeamLight->SetupAttachment(LensRoot);
 	BeamLight->SetMobility(EComponentMobility::Movable);
@@ -54,9 +57,11 @@ ATSAVDMXFixture::ATSAVDMXFixture()
 	BaseVisual->SetMobility(EComponentMobility::Movable);
 	YokeVisual->SetMobility(EComponentMobility::Movable);
 	HeadVisual->SetMobility(EComponentMobility::Movable);
+	LensVisual->SetMobility(EComponentMobility::Movable);
 	BaseVisual->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	YokeVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	HeadVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	LensVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	TargetPanDegrees = FMath::Lerp(PanMinDegrees, PanMaxDegrees, 0.5f);
 	TargetTiltDegrees = FMath::Lerp(TiltMinDegrees, TiltMaxDegrees, 0.5f);
@@ -155,11 +160,14 @@ void ATSAVDMXFixture::ApplyModelSetup()
 	BaseVisual->SetStaticMesh(BaseMesh);
 	YokeVisual->SetStaticMesh(YokeMesh);
 	HeadVisual->SetStaticMesh(HeadMesh);
+	LensVisual->SetStaticMesh(LensMesh);
 	BaseVisual->SetRelativeLocation(BaseMeshOffset);
 	YokeVisual->SetRelativeLocation(YokeMeshOffset);
 	HeadVisual->SetRelativeLocation(HeadMeshOffset);
 	PanPivot->SetRelativeLocation(PanPivotOffset);
 	TiltPivot->SetRelativeLocation(TiltPivotOffset);
+	LensVisual->SetRelativeLocation(LensOffset);
+	LensVisual->SetRelativeRotation(LensMeshRotation);
 	LensRoot->SetRelativeLocation(LensOffset);
 	LensRoot->SetRelativeRotation(BeamRotation);
 
