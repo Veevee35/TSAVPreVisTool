@@ -398,6 +398,68 @@ namespace TSAVLEDBuilder::Private
 		int32 CachedColumns = INDEX_NONE;
 	};
 
+	class SRowInternalCurveOverrideEditor final : public SCompoundWidget
+	{
+	public:
+		SLATE_BEGIN_ARGS(SRowInternalCurveOverrideEditor) {}
+			SLATE_ATTRIBUTE(int32, Rows)
+			SLATE_ARGUMENT(TArray<bool>*, IgnoreInternalCurves)
+		SLATE_END_ARGS()
+
+		void Construct(const FArguments& Args)
+		{
+			Rows = Args._Rows;
+			IgnoreInternalCurves = Args._IgnoreInternalCurves;
+			Rebuild();
+		}
+
+		virtual void Tick(const FGeometry& AllottedGeometry, const double CurrentTime, const float DeltaTime) override
+		{
+			SCompoundWidget::Tick(AllottedGeometry, CurrentTime, DeltaTime);
+			if (CachedRows != FMath::Clamp(Rows.Get(), 1, 64))
+			{
+				Rebuild();
+			}
+		}
+
+	private:
+		void Rebuild()
+		{
+			CachedRows = FMath::Clamp(Rows.Get(), 1, 64);
+			if (!IgnoreInternalCurves)
+			{
+				ChildSlot[SNullWidget::NullWidget];
+				return;
+			}
+			IgnoreInternalCurves->SetNum(CachedRows);
+
+			TSharedRef<SWrapBox> Fields = SNew(SWrapBox).UseAllottedSize(true);
+			for (int32 Row = 0; Row < CachedRows; ++Row)
+			{
+				Fields->AddSlot().Padding(0.0f, 0.0f, 12.0f, 5.0f)
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([this, Row]() { return IgnoreInternalCurves->IsValidIndex(Row) && (*IgnoreInternalCurves)[Row] ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+					.OnCheckStateChanged_Lambda([this, Row](ECheckBoxState State)
+					{
+						if (IgnoreInternalCurves->IsValidIndex(Row))
+						{
+							(*IgnoreInternalCurves)[Row] = State == ECheckBoxState::Checked;
+						}
+					})
+					[
+						SNew(STextBlock).Text(FText::Format(LOCTEXT("IgnoreInternalCurveRowLabel", "Row {0}: ignore column curves"), FText::AsNumber(Row + 1)))
+					]
+				];
+			}
+			ChildSlot[Fields];
+		}
+
+		TAttribute<int32> Rows;
+		TArray<bool>* IgnoreInternalCurves = nullptr;
+		int32 CachedRows = INDEX_NONE;
+	};
+
 	DECLARE_DELEGATE_ThreeParams(FOnPanelEdgeClicked, int32, int32, bool);
 
 	class SPanelLayoutPreview final : public SLeafWidget
@@ -944,6 +1006,25 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 					.RadiusAMeters(&ColumnInternalCurveRadiusAMeters)
 					.RadiusBMeters(&ColumnInternalCurveRadiusBMeters)
 				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f, 0.0f, 3.0f)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("FlatRowOverridesTitle", "Flat row overrides"))
+					.Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("FlatRowOverridesHelp", "Ignore internal column curves on selected rows while keeping row seam folds active. The neighboring curved face tapers to a straight shared hinge, so folded top and bottom surfaces stay flat and connected."))
+					.AutoWrapText(true)
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SRowInternalCurveOverrideEditor)
+					.Rows_Lambda([this]() { return Rows; })
+					.IgnoreInternalCurves(&RowIgnoreInternalColumnCurves)
+				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 9.0f, 0.0f, 4.0f)
 				[
 					SNew(STextBlock)
@@ -1215,6 +1296,7 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 		ColumnInternalCurveRadiusAMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusAMeters[Column]);
 		ColumnInternalCurveRadiusBMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
 	}
+	RowIgnoreInternalColumnCurves.SetNum(NewRows);
 	PanelEdgeStyles = MoveTemp(ResizedStyles);
 	Columns = NewColumns;
 	Rows = NewRows;
@@ -1338,11 +1420,13 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 	ColumnInternalCurveEnabled = Wall->ColumnInternalCurveEnabled;
 	ColumnInternalCurveRadiusAMeters = Wall->ColumnInternalCurveRadiusAMeters;
 	ColumnInternalCurveRadiusBMeters = Wall->ColumnInternalCurveRadiusBMeters;
+	RowIgnoreInternalColumnCurves = Wall->RowIgnoreInternalColumnCurves;
 	const int32 LoadedRadiusACount = ColumnInternalCurveRadiusAMeters.Num();
 	const int32 LoadedRadiusBCount = ColumnInternalCurveRadiusBMeters.Num();
 	ColumnInternalCurveEnabled.SetNum(Columns);
 	ColumnInternalCurveRadiusAMeters.SetNum(Columns);
 	ColumnInternalCurveRadiusBMeters.SetNum(Columns);
+	RowIgnoreInternalColumnCurves.SetNum(Rows);
 	for (int32 Column = 0; Column < Columns; ++Column)
 	{
 		if (Column >= LoadedRadiusACount)
@@ -1484,6 +1568,11 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 		Wall.ColumnInternalCurveRadiusAMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(RadiusA);
 		Wall.ColumnInternalCurveRadiusBMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(RadiusB);
 	}
+	Wall.RowIgnoreInternalColumnCurves.SetNum(Wall.Rows);
+	for (int32 Row = 0; Row < Wall.Rows; ++Row)
+	{
+		Wall.RowIgnoreInternalColumnCurves[Row] = RowIgnoreInternalColumnCurves.IsValidIndex(Row) && RowIgnoreInternalColumnCurves[Row];
+	}
 	Wall.bShowPanelSeams = bShowSeams;
 	Wall.LinkPattern = bSerpentine ? ETSAVLEDLinkPattern::RowsSerpentine : ETSAVLEDLinkPattern::RowsLeftToRight;
 	Wall.CanvasResolution = FIntPoint(FMath::Max(CanvasWidth, 1), FMath::Max(CanvasHeight, 1));
@@ -1553,6 +1642,11 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 	{
 		InternallyCurvedColumns += bEnabled ? 1 : 0;
 	}
+	int32 FlatOverrideRows = 0;
+	for (const bool bIgnore : RowIgnoreInternalColumnCurves)
+	{
+		FlatOverrideRows += bIgnore ? 1 : 0;
+	}
 	int32 ActivePanels = 0;
 	int32 ShapedPanels = 0;
 	int32 EmptyPanels = 0;
@@ -1564,7 +1658,7 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 		EmptyPanels += bEmpty ? 1 : 0;
 	}
 	return FText::Format(
-		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} curved seams  •  {7} internally curved columns  •  {8} shaped panels"),
+		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} curved seams  •  {7} internally curved columns  •  {8} flat override rows  •  {9} shaped panels"),
 		FText::AsNumber(ActivePanels),
 		FText::AsNumber(EmptyPanels),
 		FText::AsNumber(Resolution.X),
@@ -1573,6 +1667,7 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 		FText::AsNumber(PhysicalHeight),
 		FText::AsNumber(CurvedSeams),
 		FText::AsNumber(InternallyCurvedColumns),
+		FText::AsNumber(FlatOverrideRows),
 		FText::AsNumber(ShapedPanels));
 }
 

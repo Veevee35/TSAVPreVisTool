@@ -66,6 +66,7 @@ private:
 	TArray<bool> ColumnInternalCurveEnabled;
 	TArray<double> ColumnInternalCurveRadiusAMeters;
 	TArray<double> ColumnInternalCurveRadiusBMeters;
+	TArray<bool> RowIgnoreInternalColumnCurves;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 	ETSAVLEDPanelEdgeStyle SelectedPanelStyle = ETSAVLEDPanelEdgeStyle::Square;
 	int32 LayoutDataColumns = 8;
