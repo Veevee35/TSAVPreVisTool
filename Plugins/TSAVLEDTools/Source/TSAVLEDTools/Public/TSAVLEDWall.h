@@ -117,8 +117,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Wall")
 	bool bShowPanelSeams = true;
 
-	/** Bend at each seam (column N to N+1), clamped to -15..15 degrees in 0.5 degree steps. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-15.0", ClampMax = "15.0"))
+	/** Bend at each seam (column N to N+1), clamped to -90..90 degrees in 0.5 degree steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
 	TArray<float> ColumnSeamAnglesDegrees;
 
 	/** Legacy absolute column headings retained only to migrate walls created by the initial implementation. */

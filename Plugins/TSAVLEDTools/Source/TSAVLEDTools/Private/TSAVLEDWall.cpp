@@ -44,7 +44,7 @@ namespace TSAVLEDWall::Private
 
 	float SanitizeAngle(float Angle)
 	{
-		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -15.0f, 15.0f);
+		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -90.0f, 90.0f);
 	}
 
 	void AddArc(TArray<FVector2D>& Points, const FVector2D& Center, float StartDegrees, float EndDegrees, bool bIncludeEnd)

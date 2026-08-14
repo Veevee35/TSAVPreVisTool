@@ -38,7 +38,7 @@ namespace TSAVLEDBuilder::Private
 {
 	float SnapSeamAngle(float Angle)
 	{
-		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -15.0f, 15.0f);
+		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -90.0f, 90.0f);
 	}
 
 	float GetDerivedColumnYaw(const TArray<float>* SeamAngles, int32 Columns, int32 Column)
@@ -139,10 +139,10 @@ namespace TSAVLEDBuilder::Private
 						[
 							SNew(SNumericEntryBox<float>)
 							.Value_Lambda([this, Seam]() { return TOptional<float>(SeamAngles->IsValidIndex(Seam) ? (*SeamAngles)[Seam] : 0.0f); })
-							.MinValue(-15.0f)
-							.MaxValue(15.0f)
-							.MinSliderValue(-15.0f)
-							.MaxSliderValue(15.0f)
+							.MinValue(-90.0f)
+							.MaxValue(90.0f)
+							.MinSliderValue(-90.0f)
+							.MaxSliderValue(90.0f)
 							.Delta(0.5f)
 							.MinFractionalDigits(1)
 							.MaxFractionalDigits(1)
@@ -671,7 +671,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("ColumnAnglesHelp", "Set the bend at each seam from -15.0 to +15.0 degrees in 0.5 degree steps. Repeating a bend forms a smooth arc; positive and negative values curve in opposite directions."))
+					.Text(LOCTEXT("ColumnAnglesHelp", "Set the bend at each seam from -90.0 to +90.0 degrees in 0.5 degree steps. Repeating a bend forms a smooth arc; positive and negative values curve in opposite directions."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]
