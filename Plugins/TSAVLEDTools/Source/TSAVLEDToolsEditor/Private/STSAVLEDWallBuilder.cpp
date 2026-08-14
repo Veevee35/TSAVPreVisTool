@@ -36,16 +36,25 @@
 
 namespace TSAVLEDBuilder::Private
 {
+	constexpr double RadiusDecimalScale = 10000000000.0;
+
 	float SnapSeamAngle(float Angle)
 	{
 		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -90.0f, 90.0f);
 	}
 
-	float SnapRoundRadiusMeters(float RadiusMeters)
+	double SanitizeRoundRadiusMeters(double RadiusMeters)
 	{
 		return FMath::IsFinite(RadiusMeters)
-			? FMath::Max(FMath::RoundToFloat(RadiusMeters * 2.0f) * 0.5f, 0.5f)
-			: 0.5f;
+			? FMath::Max(FMath::RoundToDouble(RadiusMeters * RadiusDecimalScale) / RadiusDecimalScale, 0.5)
+			: 0.5;
+	}
+
+	double SanitizeSignedRadiusMeters(double RadiusMeters)
+	{
+		return FMath::IsFinite(RadiusMeters)
+			? FMath::RoundToDouble(RadiusMeters * RadiusDecimalScale) / RadiusDecimalScale
+			: 0.0;
 	}
 
 	float Cross2D(const FVector2D& A, const FVector2D& B)
@@ -60,7 +69,7 @@ namespace TSAVLEDBuilder::Private
 		const FVector2D& OppositeCorner,
 		float WidthCm,
 		float HeightCm,
-		float RadiusMeters)
+		double RadiusMeters)
 	{
 		auto ToPhysical = [WidthCm, HeightCm](const FVector2D& Point)
 		{
@@ -70,14 +79,14 @@ namespace TSAVLEDBuilder::Private
 		const FVector2D PhysicalEnd = ToPhysical(End);
 		const FVector2D Midpoint = (PhysicalStart + PhysicalEnd) * 0.5f;
 		const FVector2D Chord = PhysicalEnd - PhysicalStart;
-		const float HalfChord = Chord.Size() * 0.5f;
-		const float RadiusCm = FMath::Max(SnapRoundRadiusMeters(RadiusMeters) * 100.0f, HalfChord + 0.01f);
+		const double HalfChord = Chord.Size() * 0.5;
+		const double RadiusCm = FMath::Max(SanitizeRoundRadiusMeters(RadiusMeters) * 100.0, HalfChord + 0.01);
 		FVector2D BulgeDirection = ToPhysical(OppositeCorner) - Midpoint;
 		if (!BulgeDirection.Normalize())
 		{
 			BulgeDirection = FVector2D(-Chord.Y, Chord.X).GetSafeNormal();
 		}
-		const float CenterDistance = FMath::Sqrt(FMath::Max(RadiusCm * RadiusCm - HalfChord * HalfChord, 0.0f));
+		const double CenterDistance = FMath::Sqrt(FMath::Max(RadiusCm * RadiusCm - HalfChord * HalfChord, 0.0));
 		const FVector2D Center = Midpoint - BulgeDirection * CenterDistance;
 		const FVector2D StartVector = PhysicalStart - Center;
 		const FVector2D EndVector = PhysicalEnd - Center;
@@ -99,7 +108,7 @@ namespace TSAVLEDBuilder::Private
 		}
 	}
 
-	TArray<FVector2D> MakePanelOutlineNormalized(ETSAVLEDPanelEdgeStyle Style, float WidthCm, float HeightCm, float RadiusMeters)
+	TArray<FVector2D> MakePanelOutlineNormalized(ETSAVLEDPanelEdgeStyle Style, float WidthCm, float HeightCm, double RadiusMeters)
 	{
 		const FVector2D TopLeft(0.0f, 0.0f);
 		const FVector2D TopRight(1.0f, 0.0f);
@@ -265,6 +274,130 @@ namespace TSAVLEDBuilder::Private
 		bool bRows = false;
 	};
 
+	class SColumnInternalCurveEditor final : public SCompoundWidget
+	{
+	public:
+		SLATE_BEGIN_ARGS(SColumnInternalCurveEditor) {}
+			SLATE_ATTRIBUTE(int32, Columns)
+			SLATE_ARGUMENT(TArray<bool>*, EnabledColumns)
+			SLATE_ARGUMENT(TArray<double>*, RadiusAMeters)
+			SLATE_ARGUMENT(TArray<double>*, RadiusBMeters)
+		SLATE_END_ARGS()
+
+		void Construct(const FArguments& Args)
+		{
+			Columns = Args._Columns;
+			EnabledColumns = Args._EnabledColumns;
+			RadiusAMeters = Args._RadiusAMeters;
+			RadiusBMeters = Args._RadiusBMeters;
+			Rebuild();
+		}
+
+		virtual void Tick(const FGeometry& AllottedGeometry, const double CurrentTime, const float DeltaTime) override
+		{
+			SCompoundWidget::Tick(AllottedGeometry, CurrentTime, DeltaTime);
+			if (CachedColumns != FMath::Clamp(Columns.Get(), 1, 64))
+			{
+				Rebuild();
+			}
+		}
+
+	private:
+		void Rebuild()
+		{
+			CachedColumns = FMath::Clamp(Columns.Get(), 1, 64);
+			if (!EnabledColumns || !RadiusAMeters || !RadiusBMeters)
+			{
+				ChildSlot[SNullWidget::NullWidget];
+				return;
+			}
+			EnabledColumns->SetNum(CachedColumns);
+			const int32 PreviousRadiusACount = RadiusAMeters->Num();
+			const int32 PreviousRadiusBCount = RadiusBMeters->Num();
+			RadiusAMeters->SetNum(CachedColumns);
+			RadiusBMeters->SetNum(CachedColumns);
+			for (int32 Column = 0; Column < CachedColumns; ++Column)
+			{
+				if (Column >= PreviousRadiusACount)
+				{
+					(*RadiusAMeters)[Column] = 1.0;
+				}
+				if (Column >= PreviousRadiusBCount)
+				{
+					(*RadiusBMeters)[Column] = 1.0;
+				}
+			}
+
+			TSharedRef<SWrapBox> Fields = SNew(SWrapBox).UseAllottedSize(true);
+			for (int32 Column = 0; Column < CachedColumns; ++Column)
+			{
+				auto MakeRadiusField = [this, Column](const FText& Label, TArray<double>* Values)
+				{
+					return SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight()
+						[
+							SNew(STextBlock).Text(Label).ColorAndOpacity(FSlateColor::UseSubduedForeground())
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
+						[
+							SNew(SNumericEntryBox<double>)
+							.Value_Lambda([Values, Column]() { return TOptional<double>(Values->IsValidIndex(Column) ? (*Values)[Column] : 0.0); })
+							.MinSliderValue(-20.0)
+							.MaxSliderValue(20.0)
+							.Delta(0.0000000001)
+							.MinFractionalDigits(0)
+							.MaxFractionalDigits(10)
+							.AllowSpin(true)
+							.IsEnabled_Lambda([this, Column]() { return EnabledColumns->IsValidIndex(Column) && (*EnabledColumns)[Column]; })
+							.OnValueChanged_Lambda([Values, Column](double NewValue)
+							{
+								if (Values->IsValidIndex(Column))
+								{
+									(*Values)[Column] = SanitizeSignedRadiusMeters(NewValue);
+								}
+							})
+						];
+				};
+
+				Fields->AddSlot().Padding(0.0f, 0.0f, 10.0f, 8.0f)
+				[
+					SNew(SBox).WidthOverride(294.0f)
+					[
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight()
+						[
+							SNew(SCheckBox)
+							.IsChecked_Lambda([this, Column]() { return EnabledColumns->IsValidIndex(Column) && (*EnabledColumns)[Column] ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+							.OnCheckStateChanged_Lambda([this, Column](ECheckBoxState State)
+							{
+								if (EnabledColumns->IsValidIndex(Column))
+								{
+									(*EnabledColumns)[Column] = State == ECheckBoxState::Checked;
+								}
+							})
+							[
+								SNew(STextBlock).Text(FText::Format(LOCTEXT("InternalCurveColumnLabel", "Column {0} dual internal curve"), FText::AsNumber(Column + 1)))
+							]
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(22.0f, 4.0f, 0.0f, 0.0f)
+						[
+							SNew(SGridPanel).FillColumn(0, 1.0f).FillColumn(1, 1.0f)
+							+ SGridPanel::Slot(0, 0).Padding(0.0f, 0.0f, 6.0f, 0.0f)[MakeRadiusField(LOCTEXT("InternalRadiusALabel", "Left radius (m)"), RadiusAMeters)]
+							+ SGridPanel::Slot(1, 0).Padding(6.0f, 0.0f, 0.0f, 0.0f)[MakeRadiusField(LOCTEXT("InternalRadiusBLabel", "Right radius (m)"), RadiusBMeters)]
+						]
+					]
+				];
+			}
+			ChildSlot[Fields];
+		}
+
+		TAttribute<int32> Columns;
+		TArray<bool>* EnabledColumns = nullptr;
+		TArray<double>* RadiusAMeters = nullptr;
+		TArray<double>* RadiusBMeters = nullptr;
+		int32 CachedColumns = INDEX_NONE;
+	};
+
 	DECLARE_DELEGATE_ThreeParams(FOnPanelEdgeClicked, int32, int32, bool);
 
 	class SPanelLayoutPreview final : public SLeafWidget
@@ -275,7 +408,7 @@ namespace TSAVLEDBuilder::Private
 			SLATE_ATTRIBUTE(int32, Rows)
 			SLATE_ATTRIBUTE(float, PanelWidthCm)
 			SLATE_ATTRIBUTE(float, PanelHeightCm)
-			SLATE_ATTRIBUTE(float, RoundRadiusMeters)
+			SLATE_ATTRIBUTE(double, RoundRadiusMeters)
 			SLATE_ARGUMENT(const TArray<float>*, SeamAngles)
 			SLATE_ARGUMENT(const TArray<ETSAVLEDPanelEdgeStyle>*, EdgeStyles)
 			SLATE_EVENT(FOnPanelEdgeClicked, OnPanelEdgeClicked)
@@ -437,7 +570,7 @@ namespace TSAVLEDBuilder::Private
 		TAttribute<int32> Rows;
 		TAttribute<float> PanelWidthCm;
 		TAttribute<float> PanelHeightCm;
-		TAttribute<float> RoundRadiusMeters;
+		TAttribute<double> RoundRadiusMeters;
 		const TArray<float>* SeamAngles = nullptr;
 		const TArray<ETSAVLEDPanelEdgeStyle>* EdgeStyles = nullptr;
 		FOnPanelEdgeClicked OnPanelEdgeClicked;
@@ -793,6 +926,27 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 9.0f, 0.0f, 4.0f)
 				[
 					SNew(STextBlock)
+					.Text(LOCTEXT("InternalCurvesTitle", "Internal panel curves"))
+					.Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("InternalCurvesHelp", "Enable individual columns to curve the panel face itself instead of adding another seam angle. Each panel has independent left and right circular radii. Positive radii are convex, negative radii are concave, and zero is flat, so a single column can form an S-curve."))
+					.AutoWrapText(true)
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SColumnInternalCurveEditor)
+					.Columns_Lambda([this]() { return Columns; })
+					.EnabledColumns(&ColumnInternalCurveEnabled)
+					.RadiusAMeters(&ColumnInternalCurveRadiusAMeters)
+					.RadiusBMeters(&ColumnInternalCurveRadiusBMeters)
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 9.0f, 0.0f, 4.0f)
+				[
+					SNew(STextBlock)
 					.Text(LOCTEXT("RowAnglesTitle", "Row curvature"))
 					.Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))
 				]
@@ -830,22 +984,22 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 					[
 						SNew(STextBlock)
 						.Text(LOCTEXT("RoundRadiusLabel", "Rounded edge radius"))
-						.ToolTipText(LOCTEXT("RoundRadiusHelp", "Circle radius for all rounded corner-to-corner panel edges, starting at 0.5 m in 0.5 m steps."))
+						.ToolTipText(LOCTEXT("RoundRadiusHelp", "Circle radius for all rounded corner-to-corner panel edges. Any value from 0.5 m upward is accepted with up to ten decimal places."))
 					]
 					+ SHorizontalBox::Slot().AutoWidth()
 					[
 						SNew(SBox).WidthOverride(110.0f)
 						[
-							SNew(SNumericEntryBox<float>)
-							.Value_Lambda([this]() { return TOptional<float>(RoundEdgeRadiusMeters); })
-							.MinValue(0.5f)
-							.MinSliderValue(0.5f)
-							.MaxSliderValue(20.0f)
-							.Delta(0.5f)
-							.MinFractionalDigits(1)
-							.MaxFractionalDigits(1)
+							SNew(SNumericEntryBox<double>)
+							.Value_Lambda([this]() { return TOptional<double>(RoundEdgeRadiusMeters); })
+							.MinValue(0.5)
+							.MinSliderValue(0.5)
+							.MaxSliderValue(20.0)
+							.Delta(0.0000000001)
+							.MinFractionalDigits(0)
+							.MaxFractionalDigits(10)
 							.AllowSpin(true)
-							.OnValueChanged_Lambda([this](float NewValue) { RoundEdgeRadiusMeters = SnapRoundRadiusMeters(NewValue); })
+							.OnValueChanged_Lambda([this](double NewValue) { RoundEdgeRadiusMeters = SanitizeRoundRadiusMeters(NewValue); })
 						]
 					]
 					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.0f, 0.0f, 0.0f, 0.0f)
@@ -1043,6 +1197,24 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 	{
 		Angle = SnapSeamAngle(Angle);
 	}
+	ColumnInternalCurveEnabled.SetNum(NewColumns);
+	const int32 PreviousRadiusACount = ColumnInternalCurveRadiusAMeters.Num();
+	const int32 PreviousRadiusBCount = ColumnInternalCurveRadiusBMeters.Num();
+	ColumnInternalCurveRadiusAMeters.SetNum(NewColumns);
+	ColumnInternalCurveRadiusBMeters.SetNum(NewColumns);
+	for (int32 Column = 0; Column < NewColumns; ++Column)
+	{
+		if (Column >= PreviousRadiusACount)
+		{
+			ColumnInternalCurveRadiusAMeters[Column] = 1.0;
+		}
+		if (Column >= PreviousRadiusBCount)
+		{
+			ColumnInternalCurveRadiusBMeters[Column] = 1.0;
+		}
+		ColumnInternalCurveRadiusAMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusAMeters[Column]);
+		ColumnInternalCurveRadiusBMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
+	}
 	PanelEdgeStyles = MoveTemp(ResizedStyles);
 	Columns = NewColumns;
 	Rows = NewRows;
@@ -1162,7 +1334,28 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 	PanelEdgeStyles.SetNum(Columns * Rows);
 	PanelGapCm = Wall->PanelGapCm;
 	BorderCm = Wall->BorderCm;
-	RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SnapRoundRadiusMeters(Wall->RoundEdgeRadiusMeters);
+	RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SanitizeRoundRadiusMeters(Wall->RoundEdgeRadiusMeters);
+	ColumnInternalCurveEnabled = Wall->ColumnInternalCurveEnabled;
+	ColumnInternalCurveRadiusAMeters = Wall->ColumnInternalCurveRadiusAMeters;
+	ColumnInternalCurveRadiusBMeters = Wall->ColumnInternalCurveRadiusBMeters;
+	const int32 LoadedRadiusACount = ColumnInternalCurveRadiusAMeters.Num();
+	const int32 LoadedRadiusBCount = ColumnInternalCurveRadiusBMeters.Num();
+	ColumnInternalCurveEnabled.SetNum(Columns);
+	ColumnInternalCurveRadiusAMeters.SetNum(Columns);
+	ColumnInternalCurveRadiusBMeters.SetNum(Columns);
+	for (int32 Column = 0; Column < Columns; ++Column)
+	{
+		if (Column >= LoadedRadiusACount)
+		{
+			ColumnInternalCurveRadiusAMeters[Column] = 1.0;
+		}
+		if (Column >= LoadedRadiusBCount)
+		{
+			ColumnInternalCurveRadiusBMeters[Column] = 1.0;
+		}
+		ColumnInternalCurveRadiusAMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusAMeters[Column]);
+		ColumnInternalCurveRadiusBMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
+	}
 	CanvasWidth = Wall->CanvasResolution.X;
 	CanvasHeight = Wall->CanvasResolution.Y;
 	CanvasX = Wall->CanvasPosition.X;
@@ -1279,7 +1472,18 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 	}
 	Wall.PanelGapCm = FMath::Max(PanelGapCm, 0.0f);
 	Wall.BorderCm = FMath::Max(BorderCm, 0.0f);
-	Wall.RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SnapRoundRadiusMeters(RoundEdgeRadiusMeters);
+	Wall.RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SanitizeRoundRadiusMeters(RoundEdgeRadiusMeters);
+	Wall.ColumnInternalCurveEnabled.SetNum(Wall.Columns);
+	Wall.ColumnInternalCurveRadiusAMeters.SetNum(Wall.Columns);
+	Wall.ColumnInternalCurveRadiusBMeters.SetNum(Wall.Columns);
+	for (int32 Column = 0; Column < Wall.Columns; ++Column)
+	{
+		Wall.ColumnInternalCurveEnabled[Column] = ColumnInternalCurveEnabled.IsValidIndex(Column) && ColumnInternalCurveEnabled[Column];
+		const double RadiusA = ColumnInternalCurveRadiusAMeters.IsValidIndex(Column) ? ColumnInternalCurveRadiusAMeters[Column] : 1.0;
+		const double RadiusB = ColumnInternalCurveRadiusBMeters.IsValidIndex(Column) ? ColumnInternalCurveRadiusBMeters[Column] : 1.0;
+		Wall.ColumnInternalCurveRadiusAMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(RadiusA);
+		Wall.ColumnInternalCurveRadiusBMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(RadiusB);
+	}
 	Wall.bShowPanelSeams = bShowSeams;
 	Wall.LinkPattern = bSerpentine ? ETSAVLEDLinkPattern::RowsSerpentine : ETSAVLEDLinkPattern::RowsLeftToRight;
 	Wall.CanvasResolution = FIntPoint(FMath::Max(CanvasWidth, 1), FMath::Max(CanvasHeight, 1));
@@ -1344,6 +1548,11 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 	{
 		CurvedSeams += !FMath::IsNearlyZero(Angle) ? 1 : 0;
 	}
+	int32 InternallyCurvedColumns = 0;
+	for (const bool bEnabled : ColumnInternalCurveEnabled)
+	{
+		InternallyCurvedColumns += bEnabled ? 1 : 0;
+	}
 	int32 ActivePanels = 0;
 	int32 ShapedPanels = 0;
 	int32 EmptyPanels = 0;
@@ -1355,7 +1564,7 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 		EmptyPanels += bEmpty ? 1 : 0;
 	}
 	return FText::Format(
-		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} curved seams  •  {7} shaped panels"),
+		LOCTEXT("WallSummary", "{0} active panels ({1} empty)  •  {2} × {3} px grid  •  {4} × {5} cm  •  {6} curved seams  •  {7} internally curved columns  •  {8} shaped panels"),
 		FText::AsNumber(ActivePanels),
 		FText::AsNumber(EmptyPanels),
 		FText::AsNumber(Resolution.X),
@@ -1363,6 +1572,7 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 		FText::AsNumber(PhysicalWidth),
 		FText::AsNumber(PhysicalHeight),
 		FText::AsNumber(CurvedSeams),
+		FText::AsNumber(InternallyCurvedColumns),
 		FText::AsNumber(ShapedPanels));
 }
 

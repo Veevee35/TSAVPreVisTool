@@ -51,7 +51,7 @@ private:
 	int32 Rows = 4;
 	float PanelGapCm = 0.5f;
 	float BorderCm = 2.0f;
-	float RoundEdgeRadiusMeters = 0.5f;
+	double RoundEdgeRadiusMeters = 0.5;
 	int32 CanvasWidth = 4096;
 	int32 CanvasHeight = 2160;
 	int32 CanvasX = 0;
@@ -63,6 +63,9 @@ private:
 	float SubpixelStrength = 1.0f;
 	TArray<float> ColumnSeamAnglesDegrees;
 	TArray<float> RowSeamAnglesDegrees;
+	TArray<bool> ColumnInternalCurveEnabled;
+	TArray<double> ColumnInternalCurveRadiusAMeters;
+	TArray<double> ColumnInternalCurveRadiusBMeters;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 	ETSAVLEDPanelEdgeStyle SelectedPanelStyle = ETSAVLEDPanelEdgeStyle::Square;
 	int32 LayoutDataColumns = 8;

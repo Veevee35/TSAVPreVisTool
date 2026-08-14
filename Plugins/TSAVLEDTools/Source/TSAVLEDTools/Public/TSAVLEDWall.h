@@ -137,9 +137,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 
-	/** Circle radius used by rounded corner-to-corner panel edges, in 0.5 metre steps. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "0.5", UIMin = "0.5", UIMax = "20.0", Delta = "0.5", Units = "m"))
-	float RoundEdgeRadiusMeters = 0.5f;
+	/** Circle radius used by rounded corner-to-corner panel edges, stored to ten decimal places. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "0.5", UIMin = "0.5", UIMax = "20.0", Units = "m"))
+	double RoundEdgeRadiusMeters = 0.5;
+
+	/** Enables two true circular curve sections inside every panel in each column. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
+	TArray<bool> ColumnInternalCurveEnabled;
+
+	/** Signed radius of the left internal half of each column. Positive is convex; negative is concave; zero is flat. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
+	TArray<double> ColumnInternalCurveRadiusAMeters;
+
+	/** Signed radius of the right internal half of each column. Positive is convex; negative is concave; zero is flat. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
+	TArray<double> ColumnInternalCurveRadiusBMeters;
 
 	/** Cabinet signal/topology ordering shown in Generated Panel Links. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Topology")

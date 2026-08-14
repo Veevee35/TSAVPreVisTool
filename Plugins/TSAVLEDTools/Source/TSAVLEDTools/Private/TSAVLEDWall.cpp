@@ -15,6 +15,8 @@
 namespace TSAVLEDWall::Private
 {
 	constexpr int32 RoundCornerSegments = 12;
+	constexpr int32 InternalCurveSegmentsPerHalf = 12;
+	constexpr double RadiusDecimalScale = 10000000000.0;
 
 	struct FMeshBuffers
 	{
@@ -46,11 +48,18 @@ namespace TSAVLEDWall::Private
 		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -90.0f, 90.0f);
 	}
 
-	float SanitizeRoundRadiusMeters(float RadiusMeters)
+	double SanitizeRoundRadiusMeters(double RadiusMeters)
 	{
 		return FMath::IsFinite(RadiusMeters)
-			? FMath::Max(FMath::RoundToFloat(RadiusMeters * 2.0f) * 0.5f, 0.5f)
-			: 0.5f;
+			? FMath::Max(FMath::RoundToDouble(RadiusMeters * RadiusDecimalScale) / RadiusDecimalScale, 0.5)
+			: 0.5;
+	}
+
+	double SanitizeSignedRadiusMeters(double RadiusMeters)
+	{
+		return FMath::IsFinite(RadiusMeters)
+			? FMath::RoundToDouble(RadiusMeters * RadiusDecimalScale) / RadiusDecimalScale
+			: 0.0;
 	}
 
 	float Cross2D(const FVector2D& A, const FVector2D& B)
@@ -65,7 +74,7 @@ namespace TSAVLEDWall::Private
 		const FVector2D& OppositeCorner,
 		float WidthCm,
 		float HeightCm,
-		float RadiusMeters)
+		double RadiusMeters)
 	{
 		auto ToPhysical = [WidthCm, HeightCm](const FVector2D& Point)
 		{
@@ -75,14 +84,14 @@ namespace TSAVLEDWall::Private
 		const FVector2D PhysicalEnd = ToPhysical(End);
 		const FVector2D Midpoint = (PhysicalStart + PhysicalEnd) * 0.5f;
 		const FVector2D Chord = PhysicalEnd - PhysicalStart;
-		const float HalfChord = Chord.Size() * 0.5f;
-		const float RadiusCm = FMath::Max(SanitizeRoundRadiusMeters(RadiusMeters) * 100.0f, HalfChord + 0.01f);
+		const double HalfChord = Chord.Size() * 0.5;
+		const double RadiusCm = FMath::Max(SanitizeRoundRadiusMeters(RadiusMeters) * 100.0, HalfChord + 0.01);
 		FVector2D BulgeDirection = ToPhysical(OppositeCorner) - Midpoint;
 		if (!BulgeDirection.Normalize())
 		{
 			BulgeDirection = FVector2D(-Chord.Y, Chord.X).GetSafeNormal();
 		}
-		const float CenterDistance = FMath::Sqrt(FMath::Max(RadiusCm * RadiusCm - HalfChord * HalfChord, 0.0f));
+		const double CenterDistance = FMath::Sqrt(FMath::Max(RadiusCm * RadiusCm - HalfChord * HalfChord, 0.0));
 		const FVector2D Center = Midpoint - BulgeDirection * CenterDistance;
 		const FVector2D StartVector = PhysicalStart - Center;
 		const FVector2D EndVector = PhysicalEnd - Center;
@@ -105,7 +114,7 @@ namespace TSAVLEDWall::Private
 		}
 	}
 
-	TArray<FVector2D> MakePanelPolygon(ETSAVLEDPanelEdgeStyle Style, float WidthCm, float HeightCm, float RadiusMeters)
+	TArray<FVector2D> MakePanelPolygon(ETSAVLEDPanelEdgeStyle Style, float WidthCm, float HeightCm, double RadiusMeters)
 	{
 		const FVector2D TopLeft(0.0f, 0.0f);
 		const FVector2D TopRight(1.0f, 0.0f);
@@ -170,6 +179,87 @@ namespace TSAVLEDWall::Private
 		return FMath::Lerp(Top, Bottom, Point.Y);
 	}
 
+	double GetInternalCurveOffsetCm(double NormalizedX, double PanelWidthCm, double RadiusAMeters, double RadiusBMeters)
+	{
+		const bool bFirstHalf = NormalizedX <= 0.5;
+		const double RadiusMeters = bFirstHalf ? RadiusAMeters : RadiusBMeters;
+		if (FMath::IsNearlyZero(RadiusMeters))
+		{
+			return 0.0;
+		}
+
+		const double LocalAlpha = bFirstHalf ? NormalizedX * 2.0 : (NormalizedX - 0.5) * 2.0;
+		const double ChordLengthCm = PanelWidthCm * 0.5;
+		const double HalfChordCm = ChordLengthCm * 0.5;
+		const double RequestedRadiusCm = FMath::Abs(RadiusMeters) * 100.0;
+		const double EffectiveRadiusCm = FMath::Max(RequestedRadiusCm, HalfChordCm + 0.0001);
+		const double AlongChordCm = (LocalAlpha - 0.5) * ChordLengthCm;
+		const double EndpointDistanceCm = FMath::Sqrt(FMath::Max(EffectiveRadiusCm * EffectiveRadiusCm - HalfChordCm * HalfChordCm, 0.0));
+		const double ArcDistanceCm = FMath::Sqrt(FMath::Max(EffectiveRadiusCm * EffectiveRadiusCm - AlongChordCm * AlongChordCm, 0.0));
+		return FMath::Sign(RadiusMeters) * (ArcDistanceCm - EndpointDistanceCm);
+	}
+
+	FVector MapCurvedPanelPoint(
+		const FVector2D& Point,
+		const FVector& TopLeft,
+		const FVector& TopRight,
+		const FVector& BottomRight,
+		const FVector& BottomLeft,
+		bool bInternalCurveEnabled,
+		double RadiusAMeters,
+		double RadiusBMeters,
+		float PanelWidthCm)
+	{
+		const FVector BasePoint = MapPanelPoint(Point, TopLeft, TopRight, BottomRight, BottomLeft);
+		if (!bInternalCurveEnabled)
+		{
+			return BasePoint;
+		}
+
+		const FVector Horizontal = FMath::Lerp(TopRight - TopLeft, BottomRight - BottomLeft, Point.Y).GetSafeNormal();
+		const FVector Down = FMath::Lerp(BottomLeft - TopLeft, BottomRight - TopRight, Point.X).GetSafeNormal();
+		const FVector Normal = FVector::CrossProduct(Down, Horizontal).GetSafeNormal();
+		return BasePoint + Normal * GetInternalCurveOffsetCm(Point.X, PanelWidthCm, RadiusAMeters, RadiusBMeters);
+	}
+
+	TArray<FVector2D> ClipPolygonAtX(const TArray<FVector2D>& Input, double BoundaryX, bool bKeepGreater)
+	{
+		TArray<FVector2D> Output;
+		if (Input.IsEmpty())
+		{
+			return Output;
+		}
+
+		auto IsInside = [BoundaryX, bKeepGreater](const FVector2D& Point)
+		{
+			return bKeepGreater ? Point.X >= BoundaryX - UE_DOUBLE_SMALL_NUMBER : Point.X <= BoundaryX + UE_DOUBLE_SMALL_NUMBER;
+		};
+		FVector2D Previous = Input.Last();
+		bool bPreviousInside = IsInside(Previous);
+		for (const FVector2D& Current : Input)
+		{
+			const bool bCurrentInside = IsInside(Current);
+			if (bCurrentInside != bPreviousInside)
+			{
+				const double Denominator = Current.X - Previous.X;
+				const double Alpha = FMath::IsNearlyZero(Denominator) ? 0.0 : (BoundaryX - Previous.X) / Denominator;
+				Output.Add(FMath::Lerp(Previous, Current, Alpha));
+			}
+			if (bCurrentInside)
+			{
+				Output.Add(Current);
+			}
+			Previous = Current;
+			bPreviousInside = bCurrentInside;
+		}
+		return Output;
+	}
+
+	TArray<FVector2D> ClipPolygonToXRange(const TArray<FVector2D>& Polygon, double MinimumX, double MaximumX)
+	{
+		return ClipPolygonAtX(ClipPolygonAtX(Polygon, MinimumX, true), MaximumX, false);
+	}
+
 	void AppendFrontFace(
 		FMeshBuffers& Mesh,
 		const TArray<FVector2D>& Polygon,
@@ -180,20 +270,55 @@ namespace TSAVLEDWall::Private
 		int32 Column,
 		int32 Row,
 		int32 Columns,
-		int32 Rows)
+		int32 Rows,
+		bool bInternalCurveEnabled,
+		double RadiusAMeters,
+		double RadiusBMeters,
+		float PanelWidthCm)
 	{
-		const int32 BaseIndex = Mesh.Vertices.Num();
-		for (const FVector2D& Point : Polygon)
+		auto AppendPolygon = [&](const TArray<FVector2D>& FacePolygon)
 		{
-			const FVector2D UV(1.0f - (Column + Point.X) / Columns, (Row + Point.Y) / Rows);
-			const FVector Horizontal = FMath::Lerp(TopRight - TopLeft, BottomRight - BottomLeft, Point.Y).GetSafeNormal();
-			const FVector Down = FMath::Lerp(BottomLeft - TopLeft, BottomRight - TopRight, Point.X).GetSafeNormal();
-			const FVector Normal = FVector::CrossProduct(Down, Horizontal).GetSafeNormal();
-			Mesh.AddVertex(MapPanelPoint(Point, TopLeft, TopRight, BottomRight, BottomLeft), Normal, UV, -Horizontal);
+			if (FacePolygon.Num() < 3)
+			{
+				return;
+			}
+			const int32 BaseIndex = Mesh.Vertices.Num();
+			for (const FVector2D& Point : FacePolygon)
+			{
+				const FVector2D UV(1.0f - (Column + Point.X) / Columns, (Row + Point.Y) / Rows);
+				const double SampleDistance = 0.0001;
+				const FVector2D LeftSample(FMath::Max(Point.X - SampleDistance, 0.0), Point.Y);
+				const FVector2D RightSample(FMath::Min(Point.X + SampleDistance, 1.0), Point.Y);
+				const FVector2D TopSample(Point.X, FMath::Max(Point.Y - SampleDistance, 0.0));
+				const FVector2D BottomSample(Point.X, FMath::Min(Point.Y + SampleDistance, 1.0));
+				const FVector Left = MapCurvedPanelPoint(LeftSample, TopLeft, TopRight, BottomRight, BottomLeft, bInternalCurveEnabled, RadiusAMeters, RadiusBMeters, PanelWidthCm);
+				const FVector Right = MapCurvedPanelPoint(RightSample, TopLeft, TopRight, BottomRight, BottomLeft, bInternalCurveEnabled, RadiusAMeters, RadiusBMeters, PanelWidthCm);
+				const FVector Top = MapCurvedPanelPoint(TopSample, TopLeft, TopRight, BottomRight, BottomLeft, bInternalCurveEnabled, RadiusAMeters, RadiusBMeters, PanelWidthCm);
+				const FVector Bottom = MapCurvedPanelPoint(BottomSample, TopLeft, TopRight, BottomRight, BottomLeft, bInternalCurveEnabled, RadiusAMeters, RadiusBMeters, PanelWidthCm);
+				const FVector Horizontal = (Right - Left).GetSafeNormal();
+				const FVector Down = (Bottom - Top).GetSafeNormal();
+				const FVector Normal = FVector::CrossProduct(Down, Horizontal).GetSafeNormal();
+				const FVector Position = MapCurvedPanelPoint(Point, TopLeft, TopRight, BottomRight, BottomLeft, bInternalCurveEnabled, RadiusAMeters, RadiusBMeters, PanelWidthCm);
+				Mesh.AddVertex(Position, Normal, UV, -Horizontal);
+			}
+			for (int32 Index = 1; Index + 1 < FacePolygon.Num(); ++Index)
+			{
+				Mesh.AddTriangle(BaseIndex, BaseIndex + Index, BaseIndex + Index + 1);
+			}
+		};
+
+		if (!bInternalCurveEnabled || (FMath::IsNearlyZero(RadiusAMeters) && FMath::IsNearlyZero(RadiusBMeters)))
+		{
+			AppendPolygon(Polygon);
+			return;
 		}
-		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
+
+		const int32 SegmentCount = InternalCurveSegmentsPerHalf * 2;
+		for (int32 Segment = 0; Segment < SegmentCount; ++Segment)
 		{
-			Mesh.AddTriangle(BaseIndex, BaseIndex + Index, BaseIndex + Index + 1);
+			const double MinimumX = static_cast<double>(Segment) / SegmentCount;
+			const double MaximumX = static_cast<double>(Segment + 1) / SegmentCount;
+			AppendPolygon(ClipPolygonToXRange(Polygon, MinimumX, MaximumX));
 		}
 	}
 
@@ -339,6 +464,29 @@ namespace TSAVLEDWall::Private
 	{
 		const FVector RearA = FrontA - SurfaceNormal * ChamferSize + InwardDirection * ChamferSize;
 		const FVector RearB = FrontB - SurfaceNormal * ChamferSize + InwardDirection * ChamferSize;
+		const FVector Tangent = (FrontB - FrontA).GetSafeNormal();
+		const FVector FaceNormal = FVector::CrossProduct(RearB - FrontA, FrontB - FrontA).GetSafeNormal();
+		const int32 BaseIndex = Mesh.Vertices.Num();
+		Mesh.AddVertex(FrontA, FaceNormal, FVector2D(0.0f, 0.0f), Tangent);
+		Mesh.AddVertex(FrontB, FaceNormal, FVector2D(1.0f, 0.0f), Tangent);
+		Mesh.AddVertex(RearB, FaceNormal, FVector2D(1.0f, 1.0f), Tangent);
+		Mesh.AddVertex(RearA, FaceNormal, FVector2D(0.0f, 1.0f), Tangent);
+		Mesh.AddTriangle(BaseIndex, BaseIndex + 1, BaseIndex + 2);
+		Mesh.AddTriangle(BaseIndex, BaseIndex + 2, BaseIndex + 3);
+	}
+
+	void AppendChamferedEdgeVariable(
+		FMeshBuffers& Mesh,
+		const FVector& FrontA,
+		const FVector& FrontB,
+		const FVector& SurfaceNormalA,
+		const FVector& SurfaceNormalB,
+		const FVector& InwardDirectionA,
+		const FVector& InwardDirectionB,
+		float ChamferSize)
+	{
+		const FVector RearA = FrontA - SurfaceNormalA * ChamferSize + InwardDirectionA * ChamferSize;
+		const FVector RearB = FrontB - SurfaceNormalB * ChamferSize + InwardDirectionB * ChamferSize;
 		const FVector Tangent = (FrontB - FrontA).GetSafeNormal();
 		const FVector FaceNormal = FVector::CrossProduct(RearB - FrontA, FrontB - FrontA).GetSafeNormal();
 		const int32 BaseIndex = Mesh.Vertices.Num();
@@ -670,28 +818,99 @@ void ATSAVLEDWall::UpdateGeometry()
 			const FVector VerticalUp = -Down;
 			const FVector Normal = FVector::CrossProduct(Down, Horizontal).GetSafeNormal();
 			const FVector FrontCenter = (TopLeft + TopRight + BottomRight + BottomLeft) * 0.25f;
-			const FVector CabinetCenter = FrontCenter - Normal * DisplayFrontDepth;
+			const bool bInternalCurveEnabled = ColumnInternalCurveEnabled.IsValidIndex(Column) && ColumnInternalCurveEnabled[Column];
+			const double RadiusAMeters = ColumnInternalCurveRadiusAMeters.IsValidIndex(Column) ? ColumnInternalCurveRadiusAMeters[Column] : 0.0;
+			const double RadiusBMeters = ColumnInternalCurveRadiusBMeters.IsValidIndex(Column) ? ColumnInternalCurveRadiusBMeters[Column] : 0.0;
+			const double MaximumConcaveOffset = bInternalCurveEnabled
+				? FMath::Max3(
+					-GetInternalCurveOffsetCm(0.25, EffectivePanelWidth, RadiusAMeters, RadiusBMeters),
+					-GetInternalCurveOffsetCm(0.75, EffectivePanelWidth, RadiusAMeters, RadiusBMeters),
+					0.0)
+				: 0.0;
+			const FVector CabinetCenter = FrontCenter - Normal * (DisplayFrontDepth + MaximumConcaveOffset);
 			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row), EffectivePanelWidth, EffectivePanelHeight, RoundEdgeRadiusMeters);
-			AppendFrontFace(DisplayMesh, Polygon, TopLeft, TopRight, BottomRight, BottomLeft, Column, Row, Columns, Rows);
+			AppendFrontFace(DisplayMesh, Polygon, TopLeft, TopRight, BottomRight, BottomLeft, Column, Row, Columns, Rows, bInternalCurveEnabled, RadiusAMeters, RadiusBMeters, EffectivePanelWidth);
 			AppendChamferedCabinetBody(FrameMesh, Polygon, CabinetCenter, Normal, Horizontal, VerticalUp, CabinetWidth, CabinetHeight, CabinetFrontDepth, BackDepth);
 
 			if (ChamferSize > 0.0f)
 			{
-				if (!IsPanelEnabled(Column, Row - 1))
+				if (bInternalCurveEnabled && (!FMath::IsNearlyZero(RadiusAMeters) || !FMath::IsNearlyZero(RadiusBMeters)))
 				{
-					AppendChamferedEdge(FrameMesh, TopLeft, TopRight, Normal, Down, ChamferSize);
+					auto GetSurfaceFrame = [&](const FVector2D& Point, FVector& OutPosition, FVector& OutNormal, FVector& OutHorizontal, FVector& OutDown)
+					{
+						const double SampleDistance = 0.0001;
+						const FVector2D LeftSample(FMath::Max(Point.X - SampleDistance, 0.0), Point.Y);
+						const FVector2D RightSample(FMath::Min(Point.X + SampleDistance, 1.0), Point.Y);
+						const FVector2D TopSample(Point.X, FMath::Max(Point.Y - SampleDistance, 0.0));
+						const FVector2D BottomSample(Point.X, FMath::Min(Point.Y + SampleDistance, 1.0));
+						OutPosition = MapCurvedPanelPoint(Point, TopLeft, TopRight, BottomRight, BottomLeft, true, RadiusAMeters, RadiusBMeters, EffectivePanelWidth);
+						OutHorizontal = (MapCurvedPanelPoint(RightSample, TopLeft, TopRight, BottomRight, BottomLeft, true, RadiusAMeters, RadiusBMeters, EffectivePanelWidth)
+							- MapCurvedPanelPoint(LeftSample, TopLeft, TopRight, BottomRight, BottomLeft, true, RadiusAMeters, RadiusBMeters, EffectivePanelWidth)).GetSafeNormal();
+						OutDown = (MapCurvedPanelPoint(BottomSample, TopLeft, TopRight, BottomRight, BottomLeft, true, RadiusAMeters, RadiusBMeters, EffectivePanelWidth)
+							- MapCurvedPanelPoint(TopSample, TopLeft, TopRight, BottomRight, BottomLeft, true, RadiusAMeters, RadiusBMeters, EffectivePanelWidth)).GetSafeNormal();
+						OutNormal = FVector::CrossProduct(OutDown, OutHorizontal).GetSafeNormal();
+					};
+
+					if (!IsPanelEnabled(Column, Row - 1) || !IsPanelEnabled(Column, Row + 1))
+					{
+						const int32 SegmentCount = InternalCurveSegmentsPerHalf * 2;
+						for (int32 Segment = 0; Segment < SegmentCount; ++Segment)
+						{
+							const double X0 = static_cast<double>(Segment) / SegmentCount;
+							const double X1 = static_cast<double>(Segment + 1) / SegmentCount;
+							if (!IsPanelEnabled(Column, Row - 1))
+							{
+								FVector PositionA, NormalA, HorizontalA, DownA;
+								FVector PositionB, NormalB, HorizontalB, DownB;
+								GetSurfaceFrame(FVector2D(X0, 0.0), PositionA, NormalA, HorizontalA, DownA);
+								GetSurfaceFrame(FVector2D(X1, 0.0), PositionB, NormalB, HorizontalB, DownB);
+								AppendChamferedEdgeVariable(FrameMesh, PositionA, PositionB, NormalA, NormalB, DownA, DownB, ChamferSize);
+							}
+							if (!IsPanelEnabled(Column, Row + 1))
+							{
+								FVector PositionA, NormalA, HorizontalA, DownA;
+								FVector PositionB, NormalB, HorizontalB, DownB;
+								GetSurfaceFrame(FVector2D(X0, 1.0), PositionA, NormalA, HorizontalA, DownA);
+								GetSurfaceFrame(FVector2D(X1, 1.0), PositionB, NormalB, HorizontalB, DownB);
+								AppendChamferedEdgeVariable(FrameMesh, PositionA, PositionB, NormalA, NormalB, -DownA, -DownB, ChamferSize);
+							}
+						}
+					}
+					if (!IsPanelEnabled(Column - 1, Row))
+					{
+						FVector PositionA, NormalA, HorizontalA, DownA;
+						FVector PositionB, NormalB, HorizontalB, DownB;
+						GetSurfaceFrame(FVector2D(0.0, 0.0), PositionA, NormalA, HorizontalA, DownA);
+						GetSurfaceFrame(FVector2D(0.0, 1.0), PositionB, NormalB, HorizontalB, DownB);
+						AppendChamferedEdgeVariable(FrameMesh, PositionA, PositionB, NormalA, NormalB, HorizontalA, HorizontalB, ChamferSize);
+					}
+					if (!IsPanelEnabled(Column + 1, Row))
+					{
+						FVector PositionA, NormalA, HorizontalA, DownA;
+						FVector PositionB, NormalB, HorizontalB, DownB;
+						GetSurfaceFrame(FVector2D(1.0, 0.0), PositionA, NormalA, HorizontalA, DownA);
+						GetSurfaceFrame(FVector2D(1.0, 1.0), PositionB, NormalB, HorizontalB, DownB);
+						AppendChamferedEdgeVariable(FrameMesh, PositionA, PositionB, NormalA, NormalB, -HorizontalA, -HorizontalB, ChamferSize);
+					}
 				}
-				if (!IsPanelEnabled(Column, Row + 1))
+				else
 				{
-					AppendChamferedEdge(FrameMesh, BottomLeft, BottomRight, Normal, VerticalUp, ChamferSize);
-				}
-				if (!IsPanelEnabled(Column - 1, Row))
-				{
-					AppendChamferedEdge(FrameMesh, TopLeft, BottomLeft, Normal, Horizontal, ChamferSize);
-				}
-				if (!IsPanelEnabled(Column + 1, Row))
-				{
-					AppendChamferedEdge(FrameMesh, TopRight, BottomRight, Normal, -Horizontal, ChamferSize);
+					if (!IsPanelEnabled(Column, Row - 1))
+					{
+						AppendChamferedEdge(FrameMesh, TopLeft, TopRight, Normal, Down, ChamferSize);
+					}
+					if (!IsPanelEnabled(Column, Row + 1))
+					{
+						AppendChamferedEdge(FrameMesh, BottomLeft, BottomRight, Normal, VerticalUp, ChamferSize);
+					}
+					if (!IsPanelEnabled(Column - 1, Row))
+					{
+						AppendChamferedEdge(FrameMesh, TopLeft, BottomLeft, Normal, Horizontal, ChamferSize);
+					}
+					if (!IsPanelEnabled(Column + 1, Row))
+					{
+						AppendChamferedEdge(FrameMesh, TopRight, BottomRight, Normal, -Horizontal, ChamferSize);
+					}
 				}
 			}
 		}
@@ -787,6 +1006,24 @@ void ATSAVLEDWall::NormalizeShapeSettings()
 		Angle = TSAVLEDWall::Private::SanitizeAngle(Angle);
 	}
 	RoundEdgeRadiusMeters = TSAVLEDWall::Private::SanitizeRoundRadiusMeters(RoundEdgeRadiusMeters);
+	ColumnInternalCurveEnabled.SetNum(Columns);
+	const int32 PreviousRadiusACount = ColumnInternalCurveRadiusAMeters.Num();
+	const int32 PreviousRadiusBCount = ColumnInternalCurveRadiusBMeters.Num();
+	ColumnInternalCurveRadiusAMeters.SetNum(Columns);
+	ColumnInternalCurveRadiusBMeters.SetNum(Columns);
+	for (int32 Column = 0; Column < Columns; ++Column)
+	{
+		if (Column >= PreviousRadiusACount)
+		{
+			ColumnInternalCurveRadiusAMeters[Column] = 1.0;
+		}
+		if (Column >= PreviousRadiusBCount)
+		{
+			ColumnInternalCurveRadiusBMeters[Column] = 1.0;
+		}
+		ColumnInternalCurveRadiusAMeters[Column] = TSAVLEDWall::Private::SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusAMeters[Column]);
+		ColumnInternalCurveRadiusBMeters[Column] = TSAVLEDWall::Private::SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
+	}
 
 	PanelEdgeStyles.SetNum(Columns * Rows);
 	for (ETSAVLEDPanelEdgeStyle& Style : PanelEdgeStyles)
