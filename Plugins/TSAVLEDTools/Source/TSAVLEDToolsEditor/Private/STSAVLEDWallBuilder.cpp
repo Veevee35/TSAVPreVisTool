@@ -1015,7 +1015,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("FlatRowOverridesHelp", "Turn each consecutive set of selected rows into a centered planar top or bottom surface while keeping Row curvature as its orientation. Only the enabled panel footprint is flattened; empty columns do not stretch or deform the curved perimeter wall."))
+					.Text(LOCTEXT("FlatRowOverridesHelp", "Turn each consecutive set of selected rows into a centered planar top or bottom surface while keeping Row curvature as its orientation. The surface aligns to the closest perimeter-panel heading and uses only the enabled footprint, so empty columns do not stretch or deform the curved wall."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]

@@ -814,6 +814,20 @@ void ATSAVLEDWall::UpdateGeometry()
 	TArray<bool> FlatOverrideGridValid;
 	FlatOverrideGrid.SetNumZeroed(FrontGrid.Num());
 	FlatOverrideGridValid.Init(false, FrontGrid.Num());
+	float FlatSurfaceYawDegrees = 0.0f;
+	float NearestYawMagnitude = TNumericLimits<float>::Max();
+	for (const float ColumnYaw : ColumnYaws)
+	{
+		const float YawMagnitude = FMath::Abs(ColumnYaw);
+		if (YawMagnitude < NearestYawMagnitude - UE_KINDA_SMALL_NUMBER
+			|| (FMath::IsNearlyEqual(YawMagnitude, NearestYawMagnitude) && ColumnYaw > FlatSurfaceYawDegrees))
+		{
+			NearestYawMagnitude = YawMagnitude;
+			FlatSurfaceYawDegrees = ColumnYaw;
+		}
+	}
+	const FRotator FlatSurfaceYawRotation(0.0f, FlatSurfaceYawDegrees, 0.0f);
+	const FVector FlatHorizontal = FlatSurfaceYawRotation.RotateVector(FVector::YAxisVector);
 	for (int32 GroupStartRow = 0; GroupStartRow < Rows;)
 	{
 		if (!DoesRowIgnoreColumnCurves(GroupStartRow))
@@ -859,7 +873,7 @@ void ATSAVLEDWall::UpdateGeometry()
 		for (int32 GroupRow = GroupStartRow; GroupRow < GroupEndRow; ++GroupRow)
 		{
 			const FVector RequestedDown = FRotator(RowPitches[GroupRow], 0.0f, 0.0f).RotateVector(-FVector::ZAxisVector);
-			FVector FlatDown = RequestedDown - FVector::YAxisVector * FVector::DotProduct(RequestedDown, FVector::YAxisVector);
+			FVector FlatDown = FlatSurfaceYawRotation.RotateVector(RequestedDown);
 			if (!FlatDown.Normalize())
 			{
 				FlatDown = -FVector::ZAxisVector;
@@ -876,7 +890,7 @@ void ATSAVLEDWall::UpdateGeometry()
 			{
 				const int32 Index = GridIndex(EdgeColumn, EdgeRow);
 				FlatOverrideGrid[Index] = BoundaryCenter
-					+ FVector::YAxisVector * ((EdgeColumn - HorizontalEdgeCenter) * EffectivePanelWidth)
+					+ FlatHorizontal * ((EdgeColumn - HorizontalEdgeCenter) * EffectivePanelWidth)
 					+ RowOffset;
 				FlatOverrideGridValid[Index] = true;
 			}
