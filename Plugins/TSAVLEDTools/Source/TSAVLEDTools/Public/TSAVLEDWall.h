@@ -145,12 +145,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<bool> ColumnInternalCurveEnabled;
 
-	/** Signed radius of the left internal half of each column. Positive is convex; negative is concave; zero is flat. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
+	/** Signed circular bend of the left internal half of each column, in 0.5 degree steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
+	TArray<float> ColumnInternalCurveAngleADegrees;
+
+	/** Signed circular bend of the right internal half of each column, in 0.5 degree steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
+	TArray<float> ColumnInternalCurveAngleBDegrees;
+
+	/** Legacy radius values retained only to migrate existing LED walls to degree bends. */
+	UPROPERTY(EditAnywhere, meta = (DeprecatedProperty, DeprecationMessage = "Use ColumnInternalCurveAngleADegrees."))
 	TArray<double> ColumnInternalCurveRadiusAMeters;
 
-	/** Signed radius of the right internal half of each column. Positive is convex; negative is concave; zero is flat. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
+	/** Legacy radius values retained only to migrate existing LED walls to degree bends. */
+	UPROPERTY(EditAnywhere, meta = (DeprecatedProperty, DeprecationMessage = "Use ColumnInternalCurveAngleBDegrees."))
 	TArray<double> ColumnInternalCurveRadiusBMeters;
 
 	/** Rows that form centered planar surface groups from their enabled footprint, ignoring column and internal curves. Row-seam orientation still applies. */

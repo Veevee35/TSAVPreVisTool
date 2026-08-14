@@ -68,8 +68,8 @@ private:
 	TArray<float> ColumnSeamAnglesDegrees;
 	TArray<float> RowSeamAnglesDegrees;
 	TArray<bool> ColumnInternalCurveEnabled;
-	TArray<double> ColumnInternalCurveRadiusAMeters;
-	TArray<double> ColumnInternalCurveRadiusBMeters;
+	TArray<float> ColumnInternalCurveAngleADegrees;
+	TArray<float> ColumnInternalCurveAngleBDegrees;
 	TArray<bool> RowIgnoreInternalColumnCurves;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 	TArray<bool> PanelSelection;

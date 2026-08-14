@@ -50,13 +50,6 @@ namespace TSAVLEDBuilder::Private
 			: 0.5;
 	}
 
-	double SanitizeSignedRadiusMeters(double RadiusMeters)
-	{
-		return FMath::IsFinite(RadiusMeters)
-			? FMath::RoundToDouble(RadiusMeters * RadiusDecimalScale) / RadiusDecimalScale
-			: 0.0;
-	}
-
 	float Cross2D(const FVector2D& A, const FVector2D& B)
 	{
 		return A.X * B.Y - A.Y * B.X;
@@ -280,16 +273,16 @@ namespace TSAVLEDBuilder::Private
 		SLATE_BEGIN_ARGS(SColumnInternalCurveEditor) {}
 			SLATE_ATTRIBUTE(int32, Columns)
 			SLATE_ARGUMENT(TArray<bool>*, EnabledColumns)
-			SLATE_ARGUMENT(TArray<double>*, RadiusAMeters)
-			SLATE_ARGUMENT(TArray<double>*, RadiusBMeters)
+			SLATE_ARGUMENT(TArray<float>*, AngleADegrees)
+			SLATE_ARGUMENT(TArray<float>*, AngleBDegrees)
 		SLATE_END_ARGS()
 
 		void Construct(const FArguments& Args)
 		{
 			Columns = Args._Columns;
 			EnabledColumns = Args._EnabledColumns;
-			RadiusAMeters = Args._RadiusAMeters;
-			RadiusBMeters = Args._RadiusBMeters;
+			AngleADegrees = Args._AngleADegrees;
+			AngleBDegrees = Args._AngleBDegrees;
 			Rebuild();
 		}
 
@@ -306,32 +299,32 @@ namespace TSAVLEDBuilder::Private
 		void Rebuild()
 		{
 			CachedColumns = FMath::Clamp(Columns.Get(), 1, 64);
-			if (!EnabledColumns || !RadiusAMeters || !RadiusBMeters)
+			if (!EnabledColumns || !AngleADegrees || !AngleBDegrees)
 			{
 				ChildSlot[SNullWidget::NullWidget];
 				return;
 			}
 			EnabledColumns->SetNum(CachedColumns);
-			const int32 PreviousRadiusACount = RadiusAMeters->Num();
-			const int32 PreviousRadiusBCount = RadiusBMeters->Num();
-			RadiusAMeters->SetNum(CachedColumns);
-			RadiusBMeters->SetNum(CachedColumns);
+			const int32 PreviousAngleACount = AngleADegrees->Num();
+			const int32 PreviousAngleBCount = AngleBDegrees->Num();
+			AngleADegrees->SetNum(CachedColumns);
+			AngleBDegrees->SetNum(CachedColumns);
 			for (int32 Column = 0; Column < CachedColumns; ++Column)
 			{
-				if (Column >= PreviousRadiusACount)
+				if (Column >= PreviousAngleACount)
 				{
-					(*RadiusAMeters)[Column] = 1.0;
+					(*AngleADegrees)[Column] = 30.0f;
 				}
-				if (Column >= PreviousRadiusBCount)
+				if (Column >= PreviousAngleBCount)
 				{
-					(*RadiusBMeters)[Column] = 1.0;
+					(*AngleBDegrees)[Column] = 30.0f;
 				}
 			}
 
 			TSharedRef<SWrapBox> Fields = SNew(SWrapBox).UseAllottedSize(true);
 			for (int32 Column = 0; Column < CachedColumns; ++Column)
 			{
-				auto MakeRadiusField = [this, Column](const FText& Label, TArray<double>* Values)
+				auto MakeAngleField = [this, Column](const FText& Label, TArray<float>* Values)
 				{
 					return SNew(SVerticalBox)
 						+ SVerticalBox::Slot().AutoHeight()
@@ -340,20 +333,25 @@ namespace TSAVLEDBuilder::Private
 						]
 						+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
 						[
-							SNew(SNumericEntryBox<double>)
-							.Value_Lambda([Values, Column]() { return TOptional<double>(Values->IsValidIndex(Column) ? (*Values)[Column] : 0.0); })
-							.MinSliderValue(-20.0)
-							.MaxSliderValue(20.0)
-							.Delta(0.0000000001)
-							.MinFractionalDigits(0)
-							.MaxFractionalDigits(10)
+							SNew(SNumericEntryBox<float>)
+							.Value_Lambda([Values, Column]() { return TOptional<float>(Values->IsValidIndex(Column) ? (*Values)[Column] : 0.0f); })
+							.MinValue(-90.0f)
+							.MaxValue(90.0f)
+							.MinSliderValue(-90.0f)
+							.MaxSliderValue(90.0f)
+							.Delta(0.5f)
+							.MinFractionalDigits(1)
+							.MaxFractionalDigits(1)
 							.AllowSpin(true)
-							.IsEnabled_Lambda([this, Column]() { return EnabledColumns->IsValidIndex(Column) && (*EnabledColumns)[Column]; })
-							.OnValueChanged_Lambda([Values, Column](double NewValue)
+							.OnValueChanged_Lambda([this, Values, Column](float NewValue)
 							{
 								if (Values->IsValidIndex(Column))
 								{
-									(*Values)[Column] = SanitizeSignedRadiusMeters(NewValue);
+									(*Values)[Column] = SnapSeamAngle(NewValue);
+									if (EnabledColumns->IsValidIndex(Column))
+									{
+										(*EnabledColumns)[Column] = true;
+									}
 								}
 							})
 						];
@@ -382,8 +380,8 @@ namespace TSAVLEDBuilder::Private
 						+ SVerticalBox::Slot().AutoHeight().Padding(22.0f, 4.0f, 0.0f, 0.0f)
 						[
 							SNew(SGridPanel).FillColumn(0, 1.0f).FillColumn(1, 1.0f)
-							+ SGridPanel::Slot(0, 0).Padding(0.0f, 0.0f, 6.0f, 0.0f)[MakeRadiusField(LOCTEXT("InternalRadiusALabel", "Left radius (m)"), RadiusAMeters)]
-							+ SGridPanel::Slot(1, 0).Padding(6.0f, 0.0f, 0.0f, 0.0f)[MakeRadiusField(LOCTEXT("InternalRadiusBLabel", "Right radius (m)"), RadiusBMeters)]
+							+ SGridPanel::Slot(0, 0).Padding(0.0f, 0.0f, 6.0f, 0.0f)[MakeAngleField(LOCTEXT("InternalAngleALabel", "Left bend (deg)"), AngleADegrees)]
+							+ SGridPanel::Slot(1, 0).Padding(6.0f, 0.0f, 0.0f, 0.0f)[MakeAngleField(LOCTEXT("InternalAngleBLabel", "Right bend (deg)"), AngleBDegrees)]
 						]
 					]
 				];
@@ -393,8 +391,8 @@ namespace TSAVLEDBuilder::Private
 
 		TAttribute<int32> Columns;
 		TArray<bool>* EnabledColumns = nullptr;
-		TArray<double>* RadiusAMeters = nullptr;
-		TArray<double>* RadiusBMeters = nullptr;
+		TArray<float>* AngleADegrees = nullptr;
+		TArray<float>* AngleBDegrees = nullptr;
 		int32 CachedColumns = INDEX_NONE;
 	};
 
@@ -1120,7 +1118,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("InternalCurvesHelp", "Enable individual columns to curve the panel face itself instead of adding another seam angle. Each panel has independent left and right circular radii. Positive radii are convex, negative radii are concave, and zero is flat, so a single column can form an S-curve."))
+					.Text(LOCTEXT("InternalCurvesHelp", "Enable individual columns to bend the panel face itself, or edit either bend to enable that column automatically. Each panel has independent left and right circular bends from -90.0 to +90.0 degrees in 0.5 degree steps. Positive is convex, negative is concave, and zero is flat, so opposite signs form a true S-curve while all three internal endpoints stay connected. Rows marked Ignore column curves intentionally remain flat."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]
@@ -1129,8 +1127,34 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 					SNew(SColumnInternalCurveEditor)
 					.Columns_Lambda([this]() { return Columns; })
 					.EnabledColumns(&ColumnInternalCurveEnabled)
-					.RadiusAMeters(&ColumnInternalCurveRadiusAMeters)
-					.RadiusBMeters(&ColumnInternalCurveRadiusBMeters)
+					.AngleADegrees(&ColumnInternalCurveAngleADegrees)
+					.AngleBDegrees(&ColumnInternalCurveAngleBDegrees)
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 7.0f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text_Lambda([this]()
+						{
+							int32 EnabledCount = 0;
+							for (int32 Column = 0; Column < Columns && Column < ColumnInternalCurveEnabled.Num(); ++Column)
+							{
+								EnabledCount += ColumnInternalCurveEnabled[Column] ? 1 : 0;
+							}
+							return FText::Format(LOCTEXT("InternalCurvesEnabledSummary", "{0} of {1} columns enabled. Rows with Ignore column curves checked remain flat."), FText::AsNumber(EnabledCount), FText::AsNumber(Columns));
+						})
+						.AutoWrapText(true)
+						.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(8.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("ApplyInternalCurves", "Apply curves to selected wall"))
+						.IsEnabled_Lambda([this]() { return DoesScreenFitCanvas() && (ActiveWall.IsValid() || FindSelectedWall() != nullptr); })
+						.OnClicked(this, &STSAVLEDWallBuilder::UpdateWall)
+					]
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 7.0f, 0.0f, 3.0f)
 				[
@@ -1430,22 +1454,22 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 		Angle = SnapSeamAngle(Angle);
 	}
 	ColumnInternalCurveEnabled.SetNum(NewColumns);
-	const int32 PreviousRadiusACount = ColumnInternalCurveRadiusAMeters.Num();
-	const int32 PreviousRadiusBCount = ColumnInternalCurveRadiusBMeters.Num();
-	ColumnInternalCurveRadiusAMeters.SetNum(NewColumns);
-	ColumnInternalCurveRadiusBMeters.SetNum(NewColumns);
+	const int32 PreviousAngleACount = ColumnInternalCurveAngleADegrees.Num();
+	const int32 PreviousAngleBCount = ColumnInternalCurveAngleBDegrees.Num();
+	ColumnInternalCurveAngleADegrees.SetNum(NewColumns);
+	ColumnInternalCurveAngleBDegrees.SetNum(NewColumns);
 	for (int32 Column = 0; Column < NewColumns; ++Column)
 	{
-		if (Column >= PreviousRadiusACount)
+		if (Column >= PreviousAngleACount)
 		{
-			ColumnInternalCurveRadiusAMeters[Column] = 1.0;
+			ColumnInternalCurveAngleADegrees[Column] = 30.0f;
 		}
-		if (Column >= PreviousRadiusBCount)
+		if (Column >= PreviousAngleBCount)
 		{
-			ColumnInternalCurveRadiusBMeters[Column] = 1.0;
+			ColumnInternalCurveAngleBDegrees[Column] = 30.0f;
 		}
-		ColumnInternalCurveRadiusAMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusAMeters[Column]);
-		ColumnInternalCurveRadiusBMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
+		ColumnInternalCurveAngleADegrees[Column] = SnapSeamAngle(ColumnInternalCurveAngleADegrees[Column]);
+		ColumnInternalCurveAngleBDegrees[Column] = SnapSeamAngle(ColumnInternalCurveAngleBDegrees[Column]);
 	}
 	RowIgnoreInternalColumnCurves.SetNum(NewRows);
 	PanelSelection.Init(false, NewColumns * NewRows);
@@ -1606,27 +1630,27 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 	BorderCm = Wall->BorderCm;
 	RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SanitizeRoundRadiusMeters(Wall->RoundEdgeRadiusMeters);
 	ColumnInternalCurveEnabled = Wall->ColumnInternalCurveEnabled;
-	ColumnInternalCurveRadiusAMeters = Wall->ColumnInternalCurveRadiusAMeters;
-	ColumnInternalCurveRadiusBMeters = Wall->ColumnInternalCurveRadiusBMeters;
+	ColumnInternalCurveAngleADegrees = Wall->ColumnInternalCurveAngleADegrees;
+	ColumnInternalCurveAngleBDegrees = Wall->ColumnInternalCurveAngleBDegrees;
 	RowIgnoreInternalColumnCurves = Wall->RowIgnoreInternalColumnCurves;
-	const int32 LoadedRadiusACount = ColumnInternalCurveRadiusAMeters.Num();
-	const int32 LoadedRadiusBCount = ColumnInternalCurveRadiusBMeters.Num();
+	const int32 LoadedAngleACount = ColumnInternalCurveAngleADegrees.Num();
+	const int32 LoadedAngleBCount = ColumnInternalCurveAngleBDegrees.Num();
 	ColumnInternalCurveEnabled.SetNum(Columns);
-	ColumnInternalCurveRadiusAMeters.SetNum(Columns);
-	ColumnInternalCurveRadiusBMeters.SetNum(Columns);
+	ColumnInternalCurveAngleADegrees.SetNum(Columns);
+	ColumnInternalCurveAngleBDegrees.SetNum(Columns);
 	RowIgnoreInternalColumnCurves.SetNum(Rows);
 	for (int32 Column = 0; Column < Columns; ++Column)
 	{
-		if (Column >= LoadedRadiusACount)
+		if (Column >= LoadedAngleACount)
 		{
-			ColumnInternalCurveRadiusAMeters[Column] = 1.0;
+			ColumnInternalCurveAngleADegrees[Column] = 30.0f;
 		}
-		if (Column >= LoadedRadiusBCount)
+		if (Column >= LoadedAngleBCount)
 		{
-			ColumnInternalCurveRadiusBMeters[Column] = 1.0;
+			ColumnInternalCurveAngleBDegrees[Column] = 30.0f;
 		}
-		ColumnInternalCurveRadiusAMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusAMeters[Column]);
-		ColumnInternalCurveRadiusBMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
+		ColumnInternalCurveAngleADegrees[Column] = TSAVLEDBuilder::Private::SnapSeamAngle(ColumnInternalCurveAngleADegrees[Column]);
+		ColumnInternalCurveAngleBDegrees[Column] = TSAVLEDBuilder::Private::SnapSeamAngle(ColumnInternalCurveAngleBDegrees[Column]);
 	}
 	CanvasWidth = Wall->CanvasResolution.X;
 	CanvasHeight = Wall->CanvasResolution.Y;
@@ -1746,16 +1770,18 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 	Wall.BorderCm = FMath::Max(BorderCm, 0.0f);
 	Wall.RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SanitizeRoundRadiusMeters(RoundEdgeRadiusMeters);
 	Wall.ColumnInternalCurveEnabled.SetNum(Wall.Columns);
-	Wall.ColumnInternalCurveRadiusAMeters.SetNum(Wall.Columns);
-	Wall.ColumnInternalCurveRadiusBMeters.SetNum(Wall.Columns);
+	Wall.ColumnInternalCurveAngleADegrees.SetNum(Wall.Columns);
+	Wall.ColumnInternalCurveAngleBDegrees.SetNum(Wall.Columns);
 	for (int32 Column = 0; Column < Wall.Columns; ++Column)
 	{
 		Wall.ColumnInternalCurveEnabled[Column] = ColumnInternalCurveEnabled.IsValidIndex(Column) && ColumnInternalCurveEnabled[Column];
-		const double RadiusA = ColumnInternalCurveRadiusAMeters.IsValidIndex(Column) ? ColumnInternalCurveRadiusAMeters[Column] : 1.0;
-		const double RadiusB = ColumnInternalCurveRadiusBMeters.IsValidIndex(Column) ? ColumnInternalCurveRadiusBMeters[Column] : 1.0;
-		Wall.ColumnInternalCurveRadiusAMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(RadiusA);
-		Wall.ColumnInternalCurveRadiusBMeters[Column] = TSAVLEDBuilder::Private::SanitizeSignedRadiusMeters(RadiusB);
+		const float AngleA = ColumnInternalCurveAngleADegrees.IsValidIndex(Column) ? ColumnInternalCurveAngleADegrees[Column] : 30.0f;
+		const float AngleB = ColumnInternalCurveAngleBDegrees.IsValidIndex(Column) ? ColumnInternalCurveAngleBDegrees[Column] : 30.0f;
+		Wall.ColumnInternalCurveAngleADegrees[Column] = TSAVLEDBuilder::Private::SnapSeamAngle(AngleA);
+		Wall.ColumnInternalCurveAngleBDegrees[Column] = TSAVLEDBuilder::Private::SnapSeamAngle(AngleB);
 	}
+	Wall.ColumnInternalCurveRadiusAMeters.Reset();
+	Wall.ColumnInternalCurveRadiusBMeters.Reset();
 	Wall.RowIgnoreInternalColumnCurves.SetNum(Wall.Rows);
 	for (int32 Row = 0; Row < Wall.Rows; ++Row)
 	{
