@@ -1015,7 +1015,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("FlatRowOverridesHelp", "Ignore internal column curves on selected rows while keeping row seam folds active. The neighboring curved face tapers to a straight shared hinge, so folded top and bottom surfaces stay flat and connected."))
+					.Text(LOCTEXT("FlatRowOverridesHelp", "Ignore both Column curvature seam bends and internal radius curves on selected rows while keeping Row curvature folds active. The neighboring curved face transitions to a straight shared hinge, so folded top and bottom surfaces stay flat and connected."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]

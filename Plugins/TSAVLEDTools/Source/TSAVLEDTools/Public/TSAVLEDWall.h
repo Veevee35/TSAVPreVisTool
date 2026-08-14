@@ -153,8 +153,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<double> ColumnInternalCurveRadiusBMeters;
 
-	/** Rows that stay flat by ignoring per-column internal curves. Seam-angle folds still apply. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
+	/** Rows that stay flat by ignoring column seam bends and internal radius curves. Row-seam folds still apply. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (DisplayName = "Ignore Column Curves by Row"))
 	TArray<bool> RowIgnoreInternalColumnCurves;
 
 	/** Cabinet signal/topology ordering shown in Generated Panel Links. */

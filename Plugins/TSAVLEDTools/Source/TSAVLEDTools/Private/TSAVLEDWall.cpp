@@ -732,25 +732,67 @@ void ATSAVLEDWall::UpdateGeometry()
 	{
 		ColumnHorizontals.Add(FRotator(0.0f, ColumnYaws[Column], 0.0f).RotateVector(FVector::YAxisVector));
 	}
+	TArray<FVector> CurvedHorizontalProfile;
+	TArray<FVector> StraightHorizontalProfile;
+	CurvedHorizontalProfile.SetNumZeroed(Columns + 1);
+	StraightHorizontalProfile.SetNumZeroed(Columns + 1);
+	CurvedHorizontalProfile[0] = ColumnFrontCenters[0] - ColumnHorizontals[0] * (EffectivePanelWidth * 0.5f);
+	for (int32 EdgeColumn = 1; EdgeColumn <= Columns; ++EdgeColumn)
+	{
+		CurvedHorizontalProfile[EdgeColumn] = ColumnFrontCenters[EdgeColumn - 1] + ColumnHorizontals[EdgeColumn - 1] * (EffectivePanelWidth * 0.5f);
+	}
+	for (int32 EdgeColumn = 0; EdgeColumn <= Columns; ++EdgeColumn)
+	{
+		StraightHorizontalProfile[EdgeColumn] = FVector::YAxisVector * ((static_cast<double>(EdgeColumn) - Columns * 0.5) * EffectivePanelWidth);
+	}
+	auto DoesRowIgnoreColumnCurves = [this](int32 Row)
+	{
+		return RowIgnoreInternalColumnCurves.IsValidIndex(Row) && RowIgnoreInternalColumnCurves[Row];
+	};
+	auto GetBoundaryCurveScale = [&](int32 EdgeRow)
+	{
+		if (EdgeRow <= 0)
+		{
+			return DoesRowIgnoreColumnCurves(0) ? 0.0 : 1.0;
+		}
+		if (EdgeRow >= Rows)
+		{
+			return DoesRowIgnoreColumnCurves(Rows - 1) ? 0.0 : 1.0;
+		}
+		return DoesRowIgnoreColumnCurves(EdgeRow - 1) || DoesRowIgnoreColumnCurves(EdgeRow) ? 0.0 : 1.0;
+	};
+	auto GetHorizontalProfilePoint = [&](int32 EdgeColumn, double CurveScale)
+	{
+		return FMath::Lerp(StraightHorizontalProfile[EdgeColumn], CurvedHorizontalProfile[EdgeColumn], CurveScale);
+	};
 
 	// Build one shared front vertex grid. Each vertical grid line projects the
-	// requested row direction perpendicular to its local horizontal hinge. That
-	// prevents a panel from collapsing when simultaneous 90-degree row and
-	// column bends would otherwise align both of its axes.
+	// requested row direction perpendicular to its local horizontal hinge. Rows
+	// that ignore column curves use a straight horizontal profile at both edges;
+	// the neighboring row transitions to that same shared profile so the display
+	// stays attached without forcing the folded top/bottom row to curve.
 	TArray<FVector> FrontGrid;
 	FrontGrid.SetNumZeroed((Columns + 1) * (Rows + 1));
 	auto GridIndex = [this](int32 EdgeColumn, int32 EdgeRow)
 	{
 		return EdgeRow * (Columns + 1) + EdgeColumn;
 	};
-	FrontGrid[GridIndex(0, 0)] = ColumnFrontCenters[0] - ColumnHorizontals[0] * (EffectivePanelWidth * 0.5f);
-	for (int32 EdgeColumn = 1; EdgeColumn <= Columns; ++EdgeColumn)
+	const double TopBoundaryCurveScale = GetBoundaryCurveScale(0);
+	for (int32 EdgeColumn = 0; EdgeColumn <= Columns; ++EdgeColumn)
 	{
-		FrontGrid[GridIndex(EdgeColumn, 0)] = ColumnFrontCenters[EdgeColumn - 1] + ColumnHorizontals[EdgeColumn - 1] * (EffectivePanelWidth * 0.5f);
+		FrontGrid[GridIndex(EdgeColumn, 0)] = GetHorizontalProfilePoint(EdgeColumn, TopBoundaryCurveScale);
 	}
 	for (int32 Row = 0; Row < Rows; ++Row)
 	{
+		const double RowTopCurveScale = GetBoundaryCurveScale(Row);
+		const double RowBottomCurveScale = GetBoundaryCurveScale(Row + 1);
 		const FVector RequestedDown = FRotator(RowPitches[Row], 0.0f, 0.0f).RotateVector(-FVector::ZAxisVector);
+		auto GetSegmentHorizontal = [&](int32 Column)
+		{
+			const FVector TopSegment = GetHorizontalProfilePoint(Column + 1, RowTopCurveScale) - GetHorizontalProfilePoint(Column, RowTopCurveScale);
+			const FVector BottomSegment = GetHorizontalProfilePoint(Column + 1, RowBottomCurveScale) - GetHorizontalProfilePoint(Column, RowBottomCurveScale);
+			return (TopSegment + BottomSegment).GetSafeNormal();
+		};
 		for (int32 EdgeColumn = 0; EdgeColumn <= Columns; ++EdgeColumn)
 		{
 			FVector LocalHorizontal;
@@ -758,26 +800,26 @@ void ATSAVLEDWall::UpdateGeometry()
 			const bool bEnabledOnRight = EdgeColumn < Columns && IsPanelEnabled(EdgeColumn, Row);
 			if (bEnabledOnLeft && !bEnabledOnRight)
 			{
-				LocalHorizontal = ColumnHorizontals[EdgeColumn - 1];
+				LocalHorizontal = GetSegmentHorizontal(EdgeColumn - 1);
 			}
 			else if (bEnabledOnRight && !bEnabledOnLeft)
 			{
-				LocalHorizontal = ColumnHorizontals[EdgeColumn];
+				LocalHorizontal = GetSegmentHorizontal(EdgeColumn);
 			}
 			else if (EdgeColumn == 0)
 			{
-				LocalHorizontal = ColumnHorizontals[0];
+				LocalHorizontal = GetSegmentHorizontal(0);
 			}
 			else if (EdgeColumn == Columns)
 			{
-				LocalHorizontal = ColumnHorizontals.Last();
+				LocalHorizontal = GetSegmentHorizontal(Columns - 1);
 			}
 			else
 			{
-				LocalHorizontal = (ColumnHorizontals[EdgeColumn - 1] + ColumnHorizontals[EdgeColumn]).GetSafeNormal();
+				LocalHorizontal = (GetSegmentHorizontal(EdgeColumn - 1) + GetSegmentHorizontal(EdgeColumn)).GetSafeNormal();
 				if (LocalHorizontal.IsNearlyZero())
 				{
-					LocalHorizontal = ColumnHorizontals[EdgeColumn - 1];
+					LocalHorizontal = GetSegmentHorizontal(EdgeColumn - 1);
 				}
 			}
 			FVector SafeDown = RequestedDown - LocalHorizontal * FVector::DotProduct(RequestedDown, LocalHorizontal);
@@ -789,7 +831,8 @@ void ATSAVLEDWall::UpdateGeometry()
 			{
 				SafeDown *= -1.0f;
 			}
-			FrontGrid[GridIndex(EdgeColumn, Row + 1)] = FrontGrid[GridIndex(EdgeColumn, Row)] + SafeDown * EffectivePanelHeight;
+			const FVector HorizontalProfileDelta = GetHorizontalProfilePoint(EdgeColumn, RowBottomCurveScale) - GetHorizontalProfilePoint(EdgeColumn, RowTopCurveScale);
+			FrontGrid[GridIndex(EdgeColumn, Row + 1)] = FrontGrid[GridIndex(EdgeColumn, Row)] + HorizontalProfileDelta + SafeDown * EffectivePanelHeight;
 		}
 	}
 	const FVector SurfaceCenter = (
