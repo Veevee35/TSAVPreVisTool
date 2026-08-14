@@ -76,25 +76,27 @@ namespace TSAVLEDBuilder::Private
 		}
 	}
 
-	class SColumnSeamAngleEditor final : public SCompoundWidget
+	class SSeamAngleEditor final : public SCompoundWidget
 	{
 	public:
-		SLATE_BEGIN_ARGS(SColumnSeamAngleEditor) {}
-			SLATE_ATTRIBUTE(int32, Columns)
+		SLATE_BEGIN_ARGS(SSeamAngleEditor) {}
+			SLATE_ATTRIBUTE(int32, Segments)
 			SLATE_ARGUMENT(TArray<float>*, SeamAngles)
+			SLATE_ARGUMENT(bool, bRows)
 		SLATE_END_ARGS()
 
 		void Construct(const FArguments& Args)
 		{
-			Columns = Args._Columns;
+			Segments = Args._Segments;
 			SeamAngles = Args._SeamAngles;
+			bRows = Args._bRows;
 			Rebuild();
 		}
 
 		virtual void Tick(const FGeometry& AllottedGeometry, const double CurrentTime, const float DeltaTime) override
 		{
 			SCompoundWidget::Tick(AllottedGeometry, CurrentTime, DeltaTime);
-			if (CachedColumns != FMath::Clamp(Columns.Get(), 1, 64))
+			if (CachedSegments != FMath::Clamp(Segments.Get(), 1, 64))
 			{
 				Rebuild();
 			}
@@ -103,20 +105,20 @@ namespace TSAVLEDBuilder::Private
 	private:
 		void Rebuild()
 		{
-			CachedColumns = FMath::Clamp(Columns.Get(), 1, 64);
+			CachedSegments = FMath::Clamp(Segments.Get(), 1, 64);
 			if (!SeamAngles)
 			{
 				ChildSlot[SNullWidget::NullWidget];
 				return;
 			}
-			const int32 SeamCount = FMath::Max(CachedColumns - 1, 0);
+			const int32 SeamCount = FMath::Max(CachedSegments - 1, 0);
 			SeamAngles->SetNum(SeamCount);
 			if (SeamCount == 0)
 			{
 				ChildSlot
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("NoColumnSeams", "A one-column wall has no curvature seams."))
+					.Text(bRows ? LOCTEXT("NoRowSeams", "A one-row wall has no row curvature seams.") : LOCTEXT("NoColumnSeams", "A one-column wall has no column curvature seams."))
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				];
 				return;
@@ -132,7 +134,9 @@ namespace TSAVLEDBuilder::Private
 						+ SVerticalBox::Slot().AutoHeight()
 						[
 							SNew(STextBlock)
-							.Text(FText::Format(LOCTEXT("ColumnSeamAngleLabel", "Seam {0}  (C{1}–C{2})"), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 2)))
+							.Text(bRows
+								? FText::Format(LOCTEXT("RowSeamAngleLabel", "Seam {0}  (R{1}–R{2})"), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 2))
+								: FText::Format(LOCTEXT("ColumnSeamAngleLabel", "Seam {0}  (C{1}–C{2})"), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 1), FText::AsNumber(Seam + 2)))
 							.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 						]
 						+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
@@ -161,9 +165,10 @@ namespace TSAVLEDBuilder::Private
 			ChildSlot[Fields];
 		}
 
-		TAttribute<int32> Columns;
+		TAttribute<int32> Segments;
 		TArray<float>* SeamAngles = nullptr;
-		int32 CachedColumns = INDEX_NONE;
+		int32 CachedSegments = INDEX_NONE;
+		bool bRows = false;
 	};
 
 	DECLARE_DELEGATE_ThreeParams(FOnPanelEdgeClicked, int32, int32, bool);
@@ -677,9 +682,30 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
-					SNew(SColumnSeamAngleEditor)
-					.Columns_Lambda([this]() { return Columns; })
+					SNew(SSeamAngleEditor)
+					.Segments_Lambda([this]() { return Columns; })
 					.SeamAngles(&ColumnSeamAnglesDegrees)
+					.bRows(false)
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 9.0f, 0.0f, 4.0f)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("RowAnglesTitle", "Row curvature"))
+					.Font(FAppStyle::GetFontStyle(TEXT("NormalFontBold")))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("RowAnglesHelp", "Set the vertical bend at each row seam from -90.0 to +90.0 degrees in 0.5 degree steps. Row and column bends share the same gapless front corner grid."))
+					.AutoWrapText(true)
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SSeamAngleEditor)
+					.Segments_Lambda([this]() { return Rows; })
+					.SeamAngles(&RowSeamAnglesDegrees)
+					.bRows(true)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 4.0f)
 				[
@@ -876,6 +902,11 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 	{
 		Angle = SnapSeamAngle(Angle);
 	}
+	RowSeamAnglesDegrees.SetNum(FMath::Max(NewRows - 1, 0));
+	for (float& Angle : RowSeamAnglesDegrees)
+	{
+		Angle = SnapSeamAngle(Angle);
+	}
 	PanelEdgeStyles = MoveTemp(ResizedStyles);
 	Columns = NewColumns;
 	Rows = NewRows;
@@ -985,6 +1016,12 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 	{
 		Angle = TSAVLEDBuilder::Private::SnapSeamAngle(Angle);
 	}
+	RowSeamAnglesDegrees = Wall->RowSeamAnglesDegrees;
+	RowSeamAnglesDegrees.SetNum(FMath::Max(Rows - 1, 0));
+	for (float& Angle : RowSeamAnglesDegrees)
+	{
+		Angle = TSAVLEDBuilder::Private::SnapSeamAngle(Angle);
+	}
 	PanelEdgeStyles = Wall->PanelEdgeStyles;
 	PanelEdgeStyles.SetNum(Columns * Rows);
 	PanelGapCm = Wall->PanelGapCm;
@@ -1090,6 +1127,13 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 		const float Angle = ColumnSeamAnglesDegrees.IsValidIndex(Seam) ? ColumnSeamAnglesDegrees[Seam] : 0.0f;
 		Wall.ColumnSeamAnglesDegrees[Seam] = TSAVLEDBuilder::Private::SnapSeamAngle(Angle);
 	}
+	const int32 RowSeamCount = FMath::Max(Wall.Rows - 1, 0);
+	Wall.RowSeamAnglesDegrees.SetNum(RowSeamCount);
+	for (int32 Seam = 0; Seam < RowSeamCount; ++Seam)
+	{
+		const float Angle = RowSeamAnglesDegrees.IsValidIndex(Seam) ? RowSeamAnglesDegrees[Seam] : 0.0f;
+		Wall.RowSeamAnglesDegrees[Seam] = TSAVLEDBuilder::Private::SnapSeamAngle(Angle);
+	}
 	Wall.ColumnAnglesDegrees.Reset();
 	Wall.PanelEdgeStyles.Init(ETSAVLEDPanelEdgeStyle::Square, Wall.Columns * Wall.Rows);
 	for (int32 Index = 0; Index < Wall.PanelEdgeStyles.Num() && Index < PanelEdgeStyles.Num(); ++Index)
@@ -1155,6 +1199,10 @@ FText STSAVLEDWallBuilder::GetWallSummary() const
 	const float PhysicalHeight = FMath::Max(Rows, 1) * PanelHeightCm;
 	int32 CurvedSeams = 0;
 	for (const float Angle : ColumnSeamAnglesDegrees)
+	{
+		CurvedSeams += !FMath::IsNearlyZero(Angle) ? 1 : 0;
+	}
+	for (const float Angle : RowSeamAnglesDegrees)
 	{
 		CurvedSeams += !FMath::IsNearlyZero(Angle) ? 1 : 0;
 	}

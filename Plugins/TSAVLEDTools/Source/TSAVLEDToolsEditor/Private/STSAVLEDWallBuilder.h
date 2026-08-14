@@ -61,6 +61,7 @@ private:
 	ETSAVLEDSubpixelLayout SubpixelLayout = ETSAVLEDSubpixelLayout::None;
 	float SubpixelStrength = 1.0f;
 	TArray<float> ColumnSeamAnglesDegrees;
+	TArray<float> RowSeamAnglesDegrees;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 	ETSAVLEDPanelEdgeStyle SelectedPanelStyle = ETSAVLEDPanelEdgeStyle::Square;
 	int32 LayoutDataColumns = 8;

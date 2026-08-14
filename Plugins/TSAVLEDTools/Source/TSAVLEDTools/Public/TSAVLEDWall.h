@@ -60,6 +60,10 @@ struct TSAVLEDTOOLS_API FTSAVLEDPanelLink
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Link")
 	float ColumnAngleDegrees = 0.0f;
 
+	/** Derived absolute pitch assigned to this cabinet's row. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Link")
+	float RowAngleDegrees = 0.0f;
+
 	/** Face cut-out selected for this cabinet in the builder grid. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Link")
 	ETSAVLEDPanelEdgeStyle EdgeStyle = ETSAVLEDPanelEdgeStyle::Square;
@@ -121,6 +125,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
 	TArray<float> ColumnSeamAnglesDegrees;
 
+	/** Bend at each horizontal seam (row N to N+1), clamped to -90..90 degrees in 0.5 degree steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
+	TArray<float> RowSeamAnglesDegrees;
+
 	/** Legacy absolute column headings retained only to migrate walls created by the initial implementation. */
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use ColumnSeamAnglesDegrees."))
 	TArray<float> ColumnAnglesDegrees;
@@ -157,6 +165,9 @@ public:
 	float GetColumnAngleDegrees(int32 Column) const;
 
 	UFUNCTION(BlueprintPure, Category = "TSAV LED|Shape")
+	float GetRowAngleDegrees(int32 Row) const;
+
+	UFUNCTION(BlueprintPure, Category = "TSAV LED|Shape")
 	ETSAVLEDPanelEdgeStyle GetPanelEdgeStyle(int32 Column, int32 Row) const;
 
 	/** False when this grid position is intentionally empty. */
@@ -169,7 +180,8 @@ protected:
 
 private:
 	virtual FIntPoint GetNativePixelResolution() const override;
-	void BuildColumnTransforms(float DisplayFrontDepthCm, TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const;
+	void BuildColumnTransforms(TArray<FVector>& OutFrontCenters, TArray<float>& OutYawDegrees) const;
+	void BuildRowTransforms(TArray<FVector>& OutFrontCenters, TArray<float>& OutPitchDegrees) const;
 	void UpdateGeometry();
 	void UpdatePanelLinks();
 	void NormalizeShapeSettings();
