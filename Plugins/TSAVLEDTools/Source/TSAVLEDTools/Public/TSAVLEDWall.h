@@ -145,11 +145,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<bool> ColumnInternalCurveEnabled;
 
-	/** Signed circular tangent deflection of the left internal half of each column, in 0.5 degree steps. */
+	/** Signed circular sweep and outgoing direction change of the left internal half of each column, in 0.5 degree steps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
 	TArray<float> ColumnInternalCurveAngleADegrees;
 
-	/** Signed circular tangent deflection of the right internal half of each column, in 0.5 degree steps. */
+	/** Signed circular sweep and outgoing direction change of the right internal half of each column, in 0.5 degree steps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
 	TArray<float> ColumnInternalCurveAngleBDegrees;
 
@@ -209,6 +209,7 @@ protected:
 private:
 	virtual FIntPoint GetNativePixelResolution() const override;
 	void BuildColumnTransforms(TArray<FVector>& OutFrontCenters, TArray<float>& OutYawDegrees) const;
+	void BuildColumnPath(TArray<FVector>& OutEdgePositions, TArray<float>& OutStartYawDegrees, TArray<float>& OutEndYawDegrees, bool bIncludeInternalCurves) const;
 	void BuildRowTransforms(TArray<FVector>& OutFrontCenters, TArray<float>& OutPitchDegrees) const;
 	void UpdateGeometry();
 	void UpdatePanelLinks();

@@ -1118,7 +1118,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("InternalCurvesHelp", "Enable individual columns to bend the panel face itself, or edit either bend to enable that column automatically. Each value is the visible tangent deflection of that circular half-panel, from -90.0 to +90.0 degrees in 0.5 degree steps. Positive is convex, negative is concave, and zero is flat, so opposite signs form a true S-curve while all three internal endpoints stay connected. Rows marked Ignore column curves intentionally remain flat."))
+					.Text(LOCTEXT("InternalCurvesHelp", "Enable individual columns to make each half-panel a circular section, or edit either bend to enable that column automatically. Each value is the arc sweep and outgoing direction change of that half-column, from -90.0 to +90.0 degrees in 0.5 degree steps. The second half continues from the first, and every following column starts at the resulting edge and heading. Positive and negative values curve in opposite directions; opposite signs can form an S-curve. Rows marked Ignore column curves intentionally remain flat."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]
