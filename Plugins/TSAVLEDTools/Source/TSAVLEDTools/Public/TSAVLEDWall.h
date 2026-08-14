@@ -153,7 +153,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<double> ColumnInternalCurveRadiusBMeters;
 
-	/** Rows that stay flat by ignoring column seam bends and internal radius curves. Row-seam folds still apply. */
+	/** Rows that form centered planar surface groups from their enabled footprint, ignoring column and internal curves. Row-seam orientation still applies. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (DisplayName = "Ignore Column Curves by Row"))
 	TArray<bool> RowIgnoreInternalColumnCurves;
 
