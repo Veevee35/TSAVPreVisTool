@@ -820,7 +820,7 @@ void ATSAVLEDWall::UpdateGeometry()
 	{
 		const float YawMagnitude = FMath::Abs(ColumnYaw);
 		if (YawMagnitude < NearestYawMagnitude - UE_KINDA_SMALL_NUMBER
-			|| (FMath::IsNearlyEqual(YawMagnitude, NearestYawMagnitude) && ColumnYaw > FlatSurfaceYawDegrees))
+			|| (FMath::IsNearlyEqual(YawMagnitude, NearestYawMagnitude) && ColumnYaw < FlatSurfaceYawDegrees))
 		{
 			NearestYawMagnitude = YawMagnitude;
 			FlatSurfaceYawDegrees = ColumnYaw;
