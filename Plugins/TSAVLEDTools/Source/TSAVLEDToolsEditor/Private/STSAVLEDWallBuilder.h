@@ -30,6 +30,10 @@ private:
 	void ApplySettings(ATSAVLEDWall& Wall) const;
 	void ResizeLayoutData(int32 NewColumns, int32 NewRows);
 	void ApplyPanelStyle(int32 Column, int32 Row, bool bResetToSquare);
+	FReply ApplyStyleToPanelSelection();
+	FReply ClearPanelSelection();
+	bool HasPanelSelection() const;
+	FText GetPanelSelectionSummary() const;
 	ATSAVLEDWall* FindSelectedWall() const;
 	bool DoesScreenFitCanvas() const;
 	FIntPoint GetWallResolution() const;
@@ -68,6 +72,7 @@ private:
 	TArray<double> ColumnInternalCurveRadiusBMeters;
 	TArray<bool> RowIgnoreInternalColumnCurves;
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
+	TArray<bool> PanelSelection;
 	ETSAVLEDPanelEdgeStyle SelectedPanelStyle = ETSAVLEDPanelEdgeStyle::Square;
 	int32 LayoutDataColumns = 8;
 	int32 LayoutDataRows = 4;

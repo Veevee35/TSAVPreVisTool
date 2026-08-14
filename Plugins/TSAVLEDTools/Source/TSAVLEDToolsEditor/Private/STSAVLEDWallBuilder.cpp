@@ -473,6 +473,7 @@ namespace TSAVLEDBuilder::Private
 			SLATE_ATTRIBUTE(double, RoundRadiusMeters)
 			SLATE_ARGUMENT(const TArray<float>*, SeamAngles)
 			SLATE_ARGUMENT(const TArray<ETSAVLEDPanelEdgeStyle>*, EdgeStyles)
+			SLATE_ARGUMENT(TArray<bool>*, SelectedCells)
 			SLATE_EVENT(FOnPanelEdgeClicked, OnPanelEdgeClicked)
 		SLATE_END_ARGS()
 
@@ -485,6 +486,7 @@ namespace TSAVLEDBuilder::Private
 			RoundRadiusMeters = Args._RoundRadiusMeters;
 			SeamAngles = Args._SeamAngles;
 			EdgeStyles = Args._EdgeStyles;
+			SelectedCells = Args._SelectedCells;
 			OnPanelEdgeClicked = Args._OnPanelEdgeClicked;
 		}
 
@@ -544,6 +546,7 @@ namespace TSAVLEDBuilder::Private
 						Grid.Left + (Column + 1) * CellWidth - 2.0f,
 						Grid.Top + (Row + 1) * CellHeight - 2.0f);
 					const bool bDisabled = Style == ETSAVLEDPanelEdgeStyle::Disabled;
+					const bool bSelected = SelectedCells && SelectedCells->IsValidIndex(Index) && (*SelectedCells)[Index];
 					if (bDisabled)
 					{
 						FSlateDrawElement::MakeBox(
@@ -558,6 +561,16 @@ namespace TSAVLEDBuilder::Private
 						TArray<FVector2D> SlashB{FVector2D(Cell.Right, Cell.Top), FVector2D(Cell.Left, Cell.Bottom)};
 						FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 3, AllottedGeometry.ToPaintGeometry(), SlashA, ESlateDrawEffect::None, DisabledLineColor, true, 2.0f);
 						FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 3, AllottedGeometry.ToPaintGeometry(), SlashB, ESlateDrawEffect::None, DisabledLineColor, true, 2.0f);
+					}
+					if (bSelected)
+					{
+						FSlateDrawElement::MakeBox(
+							OutDrawElements,
+							LayerId + 4,
+							AllottedGeometry.ToPaintGeometry(FVector2D(Cell.Right - Cell.Left, Cell.Bottom - Cell.Top), FSlateLayoutTransform(FVector2D(Cell.Left, Cell.Top))),
+							FAppStyle::GetBrush(TEXT("WhiteBrush")),
+							ESlateDrawEffect::None,
+							FLinearColor(0.02f, 0.58f, 0.82f, 0.3f));
 					}
 					TArray<FVector2D> Outline = MakeOutline(Style, Cell);
 					const FVector2D FirstOutlinePoint = Outline[0];
@@ -575,9 +588,19 @@ namespace TSAVLEDBuilder::Private
 							ESlateDrawEffect::None,
 							FLinearColor::White);
 					}
+					if (bSelected)
+					{
+						TArray<FVector2D> SelectionOutline{
+							FVector2D(Cell.Left, Cell.Top),
+							FVector2D(Cell.Right, Cell.Top),
+							FVector2D(Cell.Right, Cell.Bottom),
+							FVector2D(Cell.Left, Cell.Bottom),
+							FVector2D(Cell.Left, Cell.Top)};
+						FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 6, AllottedGeometry.ToPaintGeometry(), SelectionOutline, ESlateDrawEffect::None, FLinearColor(0.1f, 0.85f, 1.0f), true, 3.0f);
+					}
 				}
 			}
-			return LayerId + 5;
+			return LayerId + 6;
 		}
 
 		virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
@@ -588,22 +611,118 @@ namespace TSAVLEDBuilder::Private
 			{
 				return FReply::Unhandled();
 			}
-			const FSlateRect Grid = GetGridRect(MyGeometry);
-			const FVector2D LocalPosition = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
-			if (LocalPosition.X < Grid.Left || LocalPosition.X >= Grid.Right || LocalPosition.Y < Grid.Top || LocalPosition.Y >= Grid.Bottom)
+			int32 Column = INDEX_NONE;
+			int32 Row = INDEX_NONE;
+			if (!GetCellAtPosition(MyGeometry, MouseEvent.GetScreenSpacePosition(), false, Column, Row))
 			{
 				return FReply::Unhandled();
 			}
-			const int32 SafeColumns = FMath::Clamp(Columns.Get(), 1, 64);
-			const int32 SafeRows = FMath::Clamp(Rows.Get(), 1, 64);
-			const int32 Column = FMath::Clamp(FMath::FloorToInt((LocalPosition.X - Grid.Left) * SafeColumns / (Grid.Right - Grid.Left)), 0, SafeColumns - 1);
-			const int32 Row = FMath::Clamp(FMath::FloorToInt((LocalPosition.Y - Grid.Top) * SafeRows / (Grid.Bottom - Grid.Top)), 0, SafeRows - 1);
-			OnPanelEdgeClicked.ExecuteIfBound(Column, Row, bRightClick);
+			if (bRightClick)
+			{
+				OnPanelEdgeClicked.ExecuteIfBound(Column, Row, true);
+				Invalidate(EInvalidateWidgetReason::Paint);
+				return FReply::Handled();
+			}
+
+			SelectionAnchorColumn = Column;
+			SelectionAnchorRow = Row;
+			SelectionCurrentColumn = Column;
+			SelectionCurrentRow = Row;
+			bSelecting = true;
+			bSelectionDragMoved = false;
+			UpdateSelectionRectangle();
 			Invalidate(EInvalidateWidgetReason::Paint);
+			return FReply::Handled().CaptureMouse(SharedThis(this));
+		}
+
+		virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+		{
+			if (!bSelecting || !HasMouseCapture())
+			{
+				return FReply::Unhandled();
+			}
+			int32 Column = INDEX_NONE;
+			int32 Row = INDEX_NONE;
+			if (GetCellAtPosition(MyGeometry, MouseEvent.GetScreenSpacePosition(), true, Column, Row)
+				&& (Column != SelectionCurrentColumn || Row != SelectionCurrentRow))
+			{
+				SelectionCurrentColumn = Column;
+				SelectionCurrentRow = Row;
+				bSelectionDragMoved = bSelectionDragMoved || Column != SelectionAnchorColumn || Row != SelectionAnchorRow;
+				UpdateSelectionRectangle();
+				Invalidate(EInvalidateWidgetReason::Paint);
+			}
 			return FReply::Handled();
 		}
 
+		virtual FReply OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+		{
+			if (!bSelecting || MouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
+			{
+				return FReply::Unhandled();
+			}
+			int32 Column = SelectionCurrentColumn;
+			int32 Row = SelectionCurrentRow;
+			GetCellAtPosition(MyGeometry, MouseEvent.GetScreenSpacePosition(), true, Column, Row);
+			SelectionCurrentColumn = Column;
+			SelectionCurrentRow = Row;
+			bSelectionDragMoved = bSelectionDragMoved || Column != SelectionAnchorColumn || Row != SelectionAnchorRow;
+			UpdateSelectionRectangle();
+			bSelecting = false;
+			if (!bSelectionDragMoved)
+			{
+				OnPanelEdgeClicked.ExecuteIfBound(Column, Row, false);
+			}
+			Invalidate(EInvalidateWidgetReason::Paint);
+			return FReply::Handled().ReleaseMouseCapture();
+		}
+
+		virtual void OnMouseCaptureLost(const FCaptureLostEvent& CaptureLostEvent) override
+		{
+			bSelecting = false;
+			SLeafWidget::OnMouseCaptureLost(CaptureLostEvent);
+		}
+
 	private:
+		bool GetCellAtPosition(const FGeometry& Geometry, const FVector2D& ScreenPosition, bool bClampToGrid, int32& OutColumn, int32& OutRow) const
+		{
+			const FSlateRect Grid = GetGridRect(Geometry);
+			FVector2D LocalPosition = Geometry.AbsoluteToLocal(ScreenPosition);
+			if (!bClampToGrid && (LocalPosition.X < Grid.Left || LocalPosition.X >= Grid.Right || LocalPosition.Y < Grid.Top || LocalPosition.Y >= Grid.Bottom))
+			{
+				return false;
+			}
+			LocalPosition.X = FMath::Clamp(LocalPosition.X, Grid.Left, Grid.Right - UE_KINDA_SMALL_NUMBER);
+			LocalPosition.Y = FMath::Clamp(LocalPosition.Y, Grid.Top, Grid.Bottom - UE_KINDA_SMALL_NUMBER);
+			const int32 SafeColumns = FMath::Clamp(Columns.Get(), 1, 64);
+			const int32 SafeRows = FMath::Clamp(Rows.Get(), 1, 64);
+			OutColumn = FMath::Clamp(FMath::FloorToInt((LocalPosition.X - Grid.Left) * SafeColumns / (Grid.Right - Grid.Left)), 0, SafeColumns - 1);
+			OutRow = FMath::Clamp(FMath::FloorToInt((LocalPosition.Y - Grid.Top) * SafeRows / (Grid.Bottom - Grid.Top)), 0, SafeRows - 1);
+			return true;
+		}
+
+		void UpdateSelectionRectangle()
+		{
+			if (!SelectedCells)
+			{
+				return;
+			}
+			const int32 SafeColumns = FMath::Clamp(Columns.Get(), 1, 64);
+			const int32 SafeRows = FMath::Clamp(Rows.Get(), 1, 64);
+			SelectedCells->Init(false, SafeColumns * SafeRows);
+			const int32 MinimumColumn = FMath::Min(SelectionAnchorColumn, SelectionCurrentColumn);
+			const int32 MaximumColumn = FMath::Max(SelectionAnchorColumn, SelectionCurrentColumn);
+			const int32 MinimumRow = FMath::Min(SelectionAnchorRow, SelectionCurrentRow);
+			const int32 MaximumRow = FMath::Max(SelectionAnchorRow, SelectionCurrentRow);
+			for (int32 Row = MinimumRow; Row <= MaximumRow; ++Row)
+			{
+				for (int32 Column = MinimumColumn; Column <= MaximumColumn; ++Column)
+				{
+					(*SelectedCells)[Row * SafeColumns + Column] = true;
+				}
+			}
+		}
+
 		FSlateRect GetGridRect(const FGeometry& Geometry) const
 		{
 			const FVector2D Size = Geometry.GetLocalSize();
@@ -635,7 +754,14 @@ namespace TSAVLEDBuilder::Private
 		TAttribute<double> RoundRadiusMeters;
 		const TArray<float>* SeamAngles = nullptr;
 		const TArray<ETSAVLEDPanelEdgeStyle>* EdgeStyles = nullptr;
+		TArray<bool>* SelectedCells = nullptr;
 		FOnPanelEdgeClicked OnPanelEdgeClicked;
+		int32 SelectionAnchorColumn = INDEX_NONE;
+		int32 SelectionAnchorRow = INDEX_NONE;
+		int32 SelectionCurrentColumn = INDEX_NONE;
+		int32 SelectionCurrentRow = INDEX_NONE;
+		bool bSelecting = false;
+		bool bSelectionDragMoved = false;
 	};
 
 	class SCanvasPreview final : public SLeafWidget
@@ -1054,7 +1180,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("PanelEdgesHelp", "Choose a shape, then click panels to apply it. Rounded edges span corner-to-corner using the radius below. Empty removes the cabinet and lets the outer trim follow the remaining shape. Right-click any cell to restore Square."))
+					.Text(LOCTEXT("PanelEdgesHelp", "Choose a shape, then click a single panel to apply it, or drag across the grid to select a rectangular region and click Apply to selection. Rounded edges span corner-to-corner using the radius below. Empty removes cabinets. Right-click any cell to restore Square."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]
@@ -1092,6 +1218,30 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				[
 					PanelStylePicker
 				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 7.0f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth()
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("ApplyPanelSelection", "Apply to selection"))
+						.IsEnabled_Lambda([this]() { return HasPanelSelection(); })
+						.OnClicked(this, &STSAVLEDWallBuilder::ApplyStyleToPanelSelection)
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(7.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("ClearPanelSelection", "Clear selection"))
+						.IsEnabled_Lambda([this]() { return HasPanelSelection(); })
+						.OnClicked(this, &STSAVLEDWallBuilder::ClearPanelSelection)
+					]
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(STextBlock)
+						.Text(this, &STSAVLEDWallBuilder::GetPanelSelectionSummary)
+						.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+					]
+				]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
 					SNew(SBox).HeightOverride(310.0f)
@@ -1104,6 +1254,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 						.RoundRadiusMeters_Lambda([this]() { return RoundEdgeRadiusMeters; })
 						.SeamAngles(&ColumnSeamAnglesDegrees)
 						.EdgeStyles(&PanelEdgeStyles)
+						.SelectedCells(&PanelSelection)
 						.OnPanelEdgeClicked(FOnPanelEdgeClicked::CreateSP(this, &STSAVLEDWallBuilder::ApplyPanelStyle))
 					]
 				]
@@ -1297,6 +1448,7 @@ void STSAVLEDWallBuilder::ResizeLayoutData(int32 NewColumns, int32 NewRows)
 		ColumnInternalCurveRadiusBMeters[Column] = SanitizeSignedRadiusMeters(ColumnInternalCurveRadiusBMeters[Column]);
 	}
 	RowIgnoreInternalColumnCurves.SetNum(NewRows);
+	PanelSelection.Init(false, NewColumns * NewRows);
 	PanelEdgeStyles = MoveTemp(ResizedStyles);
 	Columns = NewColumns;
 	Rows = NewRows;
@@ -1313,6 +1465,42 @@ void STSAVLEDWallBuilder::ApplyPanelStyle(int32 Column, int32 Row, bool bResetTo
 	}
 
 	PanelEdgeStyles[Index] = bResetToSquare ? ETSAVLEDPanelEdgeStyle::Square : SelectedPanelStyle;
+}
+
+FReply STSAVLEDWallBuilder::ApplyStyleToPanelSelection()
+{
+	int32 AppliedPanels = 0;
+	for (int32 Index = 0; Index < PanelEdgeStyles.Num() && Index < PanelSelection.Num(); ++Index)
+	{
+		if (PanelSelection[Index])
+		{
+			PanelEdgeStyles[Index] = SelectedPanelStyle;
+			++AppliedPanels;
+		}
+	}
+	SetStatus(FText::Format(LOCTEXT("PanelSelectionApplied", "Applied the selected panel shape to {0} panels."), FText::AsNumber(AppliedPanels)), true);
+	return FReply::Handled();
+}
+
+FReply STSAVLEDWallBuilder::ClearPanelSelection()
+{
+	PanelSelection.Init(false, FMath::Max(Columns, 1) * FMath::Max(Rows, 1));
+	return FReply::Handled();
+}
+
+bool STSAVLEDWallBuilder::HasPanelSelection() const
+{
+	return PanelSelection.Contains(true);
+}
+
+FText STSAVLEDWallBuilder::GetPanelSelectionSummary() const
+{
+	int32 SelectedCount = 0;
+	for (const bool bSelected : PanelSelection)
+	{
+		SelectedCount += bSelected ? 1 : 0;
+	}
+	return FText::Format(LOCTEXT("PanelSelectionSummary", "{0} panels selected"), FText::AsNumber(SelectedCount));
 }
 
 void STSAVLEDWallBuilder::OnPanelDefinitionChanged(const FAssetData& AssetData)
