@@ -124,8 +124,8 @@ namespace TSAVLEDWall::Private
 		const int32 BaseIndex = Mesh.Vertices.Num();
 		for (const FVector2D& Point : Polygon)
 		{
-			const FVector2D UV((Column + Point.X) / Columns, (Row + Point.Y) / Rows);
-			Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, Width, Height, FrontDepth), Normal, UV, Horizontal);
+			const FVector2D UV(1.0f - (Column + Point.X) / Columns, (Row + Point.Y) / Rows);
+			Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, Width, Height, FrontDepth), Normal, UV, -Horizontal);
 		}
 		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
 		{
@@ -226,13 +226,13 @@ void ATSAVLEDWall::OnConstruction(const FTransform& Transform)
 float ATSAVLEDWall::GetWallWidthCm() const
 {
 	const int32 SafeColumns = FMath::Clamp(Columns, 1, 64);
-	return SafeColumns * GetEffectivePanelWidthCm() + FMath::Max(SafeColumns - 1, 0) * FMath::Max(PanelGapCm, 0.0f) + 2.0f * GetEffectiveBorderCm();
+	return SafeColumns * GetEffectivePanelWidthCm() + 2.0f * GetEffectiveBorderCm();
 }
 
 float ATSAVLEDWall::GetWallHeightCm() const
 {
 	const int32 SafeRows = FMath::Clamp(Rows, 1, 64);
-	return SafeRows * GetEffectivePanelHeightCm() + FMath::Max(SafeRows - 1, 0) * FMath::Max(PanelGapCm, 0.0f) + 2.0f * GetEffectiveBorderCm();
+	return SafeRows * GetEffectivePanelHeightCm() + 2.0f * GetEffectiveBorderCm();
 }
 
 FIntPoint ATSAVLEDWall::GetWallResolutionPixels() const
@@ -252,7 +252,7 @@ float ATSAVLEDWall::GetColumnAngleDegrees(int32 Column) const
 {
 	TArray<FVector> ColumnCenters;
 	TArray<float> ColumnYaws;
-	BuildColumnTransforms(ColumnCenters, ColumnYaws);
+	BuildColumnTransforms(GetEffectivePanelDepthCm() * 0.5f + 0.2f, ColumnCenters, ColumnYaws);
 	return ColumnYaws.IsValidIndex(Column) ? ColumnYaws[Column] : 0.0f;
 }
 
@@ -282,11 +282,10 @@ void ATSAVLEDWall::OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial)
 	}
 }
 
-void ATSAVLEDWall::BuildColumnTransforms(TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const
+void ATSAVLEDWall::BuildColumnTransforms(float DisplayFrontDepthCm, TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const
 {
 	const int32 SafeColumns = FMath::Clamp(Columns, 1, 64);
 	const float PanelWidth = GetEffectivePanelWidthCm();
-	const float GapHalf = FMath::Max(PanelGapCm, 0.0f) * 0.5f;
 
 	OutCenters.SetNumZeroed(SafeColumns);
 	OutYawDegrees.SetNumZeroed(SafeColumns);
@@ -310,21 +309,28 @@ void ATSAVLEDWall::BuildColumnTransforms(TArray<FVector>& OutCenters, TArray<flo
 		Yaw -= FacingCenter;
 	}
 
-	// Join the two cabinet edges at every hinge. Half of a configured gap follows
-	// each neighboring tangent, which preserves even spacing through the curve.
+	// Solve every hinge on the actual video plane. Adjacent front corners then
+	// occupy the exact same point at any supported bend angle, while clearance,
+	// gaps, and any cabinet overlap remain behind the uninterrupted image.
 	for (int32 Column = 1; Column < SafeColumns; ++Column)
 	{
-		const FVector PreviousTangent = FRotator(0.0f, OutYawDegrees[Column - 1], 0.0f).RotateVector(FVector::YAxisVector);
-		const FVector CurrentTangent = FRotator(0.0f, OutYawDegrees[Column], 0.0f).RotateVector(FVector::YAxisVector);
+		const FRotator PreviousRotation(0.0f, OutYawDegrees[Column - 1], 0.0f);
+		const FRotator CurrentRotation(0.0f, OutYawDegrees[Column], 0.0f);
+		const FVector PreviousNormal = PreviousRotation.RotateVector(FVector::XAxisVector);
+		const FVector CurrentNormal = CurrentRotation.RotateVector(FVector::XAxisVector);
+		const FVector PreviousTangent = PreviousRotation.RotateVector(FVector::YAxisVector);
+		const FVector CurrentTangent = CurrentRotation.RotateVector(FVector::YAxisVector);
 		OutCenters[Column] = OutCenters[Column - 1]
-			+ PreviousTangent * (PanelWidth * 0.5f + GapHalf)
-			+ CurrentTangent * (PanelWidth * 0.5f + GapHalf);
+			+ PreviousNormal * DisplayFrontDepthCm
+			+ PreviousTangent * (PanelWidth * 0.5f)
+			- CurrentNormal * DisplayFrontDepthCm
+			+ CurrentTangent * (PanelWidth * 0.5f);
 	}
 
 	const FVector FirstTangent = FRotator(0.0f, OutYawDegrees[0], 0.0f).RotateVector(FVector::YAxisVector);
 	const FVector LastTangent = FRotator(0.0f, OutYawDegrees.Last(), 0.0f).RotateVector(FVector::YAxisVector);
-	const FVector FirstEdge = OutCenters[0] - FirstTangent * (PanelWidth * 0.5f + GapHalf);
-	const FVector LastEdge = OutCenters.Last() + LastTangent * (PanelWidth * 0.5f + GapHalf);
+	const FVector FirstEdge = OutCenters[0] - FirstTangent * (PanelWidth * 0.5f);
+	const FVector LastEdge = OutCenters.Last() + LastTangent * (PanelWidth * 0.5f);
 	const FVector CenterOffset = (FirstEdge + LastEdge) * 0.5f;
 	for (FVector& Center : OutCenters)
 	{
@@ -344,9 +350,13 @@ void ATSAVLEDWall::UpdateGeometry()
 	const float EffectivePanelHeight = GetEffectivePanelHeightCm();
 	const float EffectiveDepth = GetEffectivePanelDepthCm();
 	const float EffectiveBorder = GetEffectiveBorderCm();
+	const float CabinetWidth = FMath::Max(EffectivePanelWidth - PanelGapCm, 1.0f);
+	const float CabinetHeight = FMath::Max(EffectivePanelHeight - PanelGapCm, 1.0f);
+	const float CabinetFrontDepth = EffectiveDepth * 0.5f;
+	const float DisplayFrontDepth = CabinetFrontDepth + 0.2f;
+	const float BackDepth = -EffectiveDepth * 0.5f;
 
-	const float DisplayWidth = Columns * EffectivePanelWidth + (Columns - 1) * PanelGapCm;
-	const float DisplayHeight = Rows * EffectivePanelHeight + (Rows - 1) * PanelGapCm;
+	const float DisplayHeight = Rows * EffectivePanelHeight;
 	DisplaySurface->SetVisibility(false);
 	DisplaySurface->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	for (UStaticMeshComponent* LegacyComponent : {Backing.Get(), TopBorder.Get(), BottomBorder.Get(), LeftBorder.Get(), RightBorder.Get()})
@@ -359,7 +369,7 @@ void ATSAVLEDWall::UpdateGeometry()
 
 	TArray<FVector> ColumnCenters;
 	TArray<float> ColumnYaws;
-	BuildColumnTransforms(ColumnCenters, ColumnYaws);
+	BuildColumnTransforms(DisplayFrontDepth, ColumnCenters, ColumnYaws);
 	TArray<FVector> ColumnNormals;
 	TArray<FVector> ColumnHorizontals;
 	ColumnNormals.Reserve(Columns);
@@ -375,12 +385,10 @@ void ATSAVLEDWall::UpdateGeometry()
 
 	FMeshBuffers DisplayMesh;
 	FMeshBuffers FrameMesh;
-	const float FrontDepth = EffectiveDepth * 0.5f + 0.2f;
-	const float BackDepth = -EffectiveDepth * 0.5f;
 	const TArray<FVector2D> Rectangle = MakePanelPolygon(ETSAVLEDPanelEdgeStyle::Square);
 	for (int32 Row = 0; Row < Rows; ++Row)
 	{
-		const float Z = DisplayHeight * 0.5f - EffectivePanelHeight * 0.5f - Row * (EffectivePanelHeight + PanelGapCm);
+		const float Z = DisplayHeight * 0.5f - EffectivePanelHeight * 0.5f - Row * EffectivePanelHeight;
 		for (int32 Column = 0; Column < Columns; ++Column)
 		{
 			if (!IsPanelEnabled(Column, Row))
@@ -390,30 +398,30 @@ void ATSAVLEDWall::UpdateGeometry()
 
 			const FVector Center = ColumnCenters[Column] + FVector::UpVector * Z;
 			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row));
-			AppendFrontFace(DisplayMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, FrontDepth, Column, Row, Columns, Rows);
-			AppendCabinetBody(FrameMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, FrontDepth, BackDepth, false);
+			AppendFrontFace(DisplayMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectivePanelHeight, DisplayFrontDepth, Column, Row, Columns, Rows);
+			AppendCabinetBody(FrameMesh, Polygon, Center, ColumnNormals[Column], ColumnHorizontals[Column], CabinetWidth, CabinetHeight, CabinetFrontDepth, BackDepth, false);
 
 			if (EffectiveBorder > 0.0f)
 			{
 				if (!IsPanelEnabled(Column, Row - 1))
 				{
 					const FVector TopCenter = Center + FVector::UpVector * ((EffectivePanelHeight + EffectiveBorder) * 0.5f);
-					AppendCabinetBody(FrameMesh, Rectangle, TopCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+					AppendCabinetBody(FrameMesh, Rectangle, TopCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, CabinetFrontDepth, BackDepth, true);
 				}
 				if (!IsPanelEnabled(Column, Row + 1))
 				{
 					const FVector BottomCenter = Center - FVector::UpVector * ((EffectivePanelHeight + EffectiveBorder) * 0.5f);
-					AppendCabinetBody(FrameMesh, Rectangle, BottomCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, FrontDepth, BackDepth, true);
+					AppendCabinetBody(FrameMesh, Rectangle, BottomCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectivePanelWidth, EffectiveBorder, CabinetFrontDepth, BackDepth, true);
 				}
 				if (!IsPanelEnabled(Column - 1, Row))
 				{
 					const FVector LeftCenter = Center - ColumnHorizontals[Column] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
-					AppendCabinetBody(FrameMesh, Rectangle, LeftCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectiveBorder, EffectivePanelHeight, FrontDepth, BackDepth, true);
+					AppendCabinetBody(FrameMesh, Rectangle, LeftCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectiveBorder, EffectivePanelHeight, CabinetFrontDepth, BackDepth, true);
 				}
 				if (!IsPanelEnabled(Column + 1, Row))
 				{
 					const FVector RightCenter = Center + ColumnHorizontals[Column] * ((EffectivePanelWidth + EffectiveBorder) * 0.5f);
-					AppendCabinetBody(FrameMesh, Rectangle, RightCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectiveBorder, EffectivePanelHeight, FrontDepth, BackDepth, true);
+					AppendCabinetBody(FrameMesh, Rectangle, RightCenter, ColumnNormals[Column], ColumnHorizontals[Column], EffectiveBorder, EffectivePanelHeight, CabinetFrontDepth, BackDepth, true);
 				}
 			}
 		}

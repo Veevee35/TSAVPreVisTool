@@ -103,7 +103,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Pixels", meta = (ClampMin = "1", EditCondition = "!bUsePanelDefinition"))
 	int32 PanelResolutionY = 128;
 
-	/** Visible space/seam between adjacent cabinets. */
+	/** Clearance between cabinet bodies behind the continuous front video surface. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Wall", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "5.0"))
 	float PanelGapCm = 0.5f;
 
@@ -169,7 +169,7 @@ protected:
 
 private:
 	virtual FIntPoint GetNativePixelResolution() const override;
-	void BuildColumnTransforms(TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const;
+	void BuildColumnTransforms(float DisplayFrontDepthCm, TArray<FVector>& OutCenters, TArray<float>& OutYawDegrees) const;
 	void UpdateGeometry();
 	void UpdatePanelLinks();
 	void NormalizeShapeSettings();

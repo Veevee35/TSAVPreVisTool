@@ -659,7 +659,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 					SNew(SGridPanel).FillColumn(0, 1.0f).FillColumn(1, 1.0f)
 					+ SGridPanel::Slot(0, 0).Padding(0.0f, 3.0f, 8.0f, 3.0f)[MakeDimensionField(LOCTEXT("Columns", "Columns"), true)]
 					+ SGridPanel::Slot(1, 0).Padding(8.0f, 3.0f, 0.0f, 3.0f)[MakeDimensionField(LOCTEXT("Rows", "Rows"), false)]
-					+ SGridPanel::Slot(0, 1).Padding(0.0f, 3.0f, 8.0f, 3.0f)[MakeFloatField(LOCTEXT("Gap", "Panel gap"), &PanelGapCm, 0.0f, LOCTEXT("Cm", "cm"))]
+					+ SGridPanel::Slot(0, 1).Padding(0.0f, 3.0f, 8.0f, 3.0f)[MakeFloatField(LOCTEXT("Gap", "Rear cabinet gap"), &PanelGapCm, 0.0f, LOCTEXT("Cm", "cm"))]
 					+ SGridPanel::Slot(1, 1).Padding(8.0f, 3.0f, 0.0f, 3.0f)[MakeFloatField(LOCTEXT("Border", "Outer border"), &BorderCm, 0.0f, LOCTEXT("Cm", "cm"))]
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 9.0f, 0.0f, 4.0f)
@@ -1151,8 +1151,8 @@ FVector2D STSAVLEDWallBuilder::GetPixelPitchMm() const
 FText STSAVLEDWallBuilder::GetWallSummary() const
 {
 	const FIntPoint Resolution = GetWallResolution();
-	const float PhysicalWidth = FMath::Max(Columns, 1) * PanelWidthCm + FMath::Max(Columns - 1, 0) * PanelGapCm;
-	const float PhysicalHeight = FMath::Max(Rows, 1) * PanelHeightCm + FMath::Max(Rows - 1, 0) * PanelGapCm;
+	const float PhysicalWidth = FMath::Max(Columns, 1) * PanelWidthCm;
+	const float PhysicalHeight = FMath::Max(Rows, 1) * PanelHeightCm;
 	int32 CurvedSeams = 0;
 	for (const float Angle : ColumnSeamAnglesDegrees)
 	{
