@@ -51,6 +51,7 @@ private:
 	int32 Rows = 4;
 	float PanelGapCm = 0.5f;
 	float BorderCm = 2.0f;
+	float RoundEdgeRadiusMeters = 0.5f;
 	int32 CanvasWidth = 4096;
 	int32 CanvasHeight = 2160;
 	int32 CanvasX = 0;

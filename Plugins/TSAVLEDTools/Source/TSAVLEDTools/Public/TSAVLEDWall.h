@@ -137,6 +137,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<ETSAVLEDPanelEdgeStyle> PanelEdgeStyles;
 
+	/** Circle radius used by rounded corner-to-corner panel edges, in 0.5 metre steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "0.5", UIMin = "0.5", UIMax = "20.0", Delta = "0.5", Units = "m"))
+	float RoundEdgeRadiusMeters = 0.5f;
+
 	/** Cabinet signal/topology ordering shown in Generated Panel Links. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Topology")
 	ETSAVLEDLinkPattern LinkPattern = ETSAVLEDLinkPattern::RowsSerpentine;

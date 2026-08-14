@@ -14,8 +14,7 @@
 
 namespace TSAVLEDWall::Private
 {
-	constexpr float EdgeCutFraction = 0.28f;
-	constexpr int32 RoundCornerSegments = 6;
+	constexpr int32 RoundCornerSegments = 12;
 
 	struct FMeshBuffers
 	{
@@ -47,51 +46,102 @@ namespace TSAVLEDWall::Private
 		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -90.0f, 90.0f);
 	}
 
-	void AddArc(TArray<FVector2D>& Points, const FVector2D& Center, float StartDegrees, float EndDegrees, bool bIncludeEnd)
+	float SanitizeRoundRadiusMeters(float RadiusMeters)
 	{
-		const int32 LastStep = bIncludeEnd ? RoundCornerSegments : RoundCornerSegments - 1;
-		for (int32 Step = 1; Step <= LastStep; ++Step)
+		return FMath::IsFinite(RadiusMeters)
+			? FMath::Max(FMath::RoundToFloat(RadiusMeters * 2.0f) * 0.5f, 0.5f)
+			: 0.5f;
+	}
+
+	float Cross2D(const FVector2D& A, const FVector2D& B)
+	{
+		return A.X * B.Y - A.Y * B.X;
+	}
+
+	void AddCornerSpanningArc(
+		TArray<FVector2D>& Points,
+		const FVector2D& Start,
+		const FVector2D& End,
+		const FVector2D& OppositeCorner,
+		float WidthCm,
+		float HeightCm,
+		float RadiusMeters)
+	{
+		auto ToPhysical = [WidthCm, HeightCm](const FVector2D& Point)
 		{
-			const float Alpha = static_cast<float>(Step) / RoundCornerSegments;
-			const float Angle = FMath::DegreesToRadians(FMath::Lerp(StartDegrees, EndDegrees, Alpha));
-			Points.Emplace(Center.X + EdgeCutFraction * FMath::Cos(Angle), Center.Y + EdgeCutFraction * FMath::Sin(Angle));
+			return FVector2D(Point.X * WidthCm, Point.Y * HeightCm);
+		};
+		const FVector2D PhysicalStart = ToPhysical(Start);
+		const FVector2D PhysicalEnd = ToPhysical(End);
+		const FVector2D Midpoint = (PhysicalStart + PhysicalEnd) * 0.5f;
+		const FVector2D Chord = PhysicalEnd - PhysicalStart;
+		const float HalfChord = Chord.Size() * 0.5f;
+		const float RadiusCm = FMath::Max(SanitizeRoundRadiusMeters(RadiusMeters) * 100.0f, HalfChord + 0.01f);
+		FVector2D BulgeDirection = ToPhysical(OppositeCorner) - Midpoint;
+		if (!BulgeDirection.Normalize())
+		{
+			BulgeDirection = FVector2D(-Chord.Y, Chord.X).GetSafeNormal();
+		}
+		const float CenterDistance = FMath::Sqrt(FMath::Max(RadiusCm * RadiusCm - HalfChord * HalfChord, 0.0f));
+		const FVector2D Center = Midpoint - BulgeDirection * CenterDistance;
+		const FVector2D StartVector = PhysicalStart - Center;
+		const FVector2D EndVector = PhysicalEnd - Center;
+		float SweepRadians = FMath::Atan2(Cross2D(StartVector, EndVector), FVector2D::DotProduct(StartVector, EndVector));
+		if (FMath::IsNearlyZero(SweepRadians))
+		{
+			SweepRadians = PI;
+		}
+
+		for (int32 Step = 1; Step < RoundCornerSegments; ++Step)
+		{
+			const float Angle = SweepRadians * static_cast<float>(Step) / RoundCornerSegments;
+			const float CosAngle = FMath::Cos(Angle);
+			const float SinAngle = FMath::Sin(Angle);
+			const FVector2D Rotated(
+				StartVector.X * CosAngle - StartVector.Y * SinAngle,
+				StartVector.X * SinAngle + StartVector.Y * CosAngle);
+			const FVector2D PhysicalPoint = Center + Rotated;
+			Points.Emplace(PhysicalPoint.X / WidthCm, PhysicalPoint.Y / HeightCm);
 		}
 	}
 
-	TArray<FVector2D> MakePanelPolygon(ETSAVLEDPanelEdgeStyle Style)
+	TArray<FVector2D> MakePanelPolygon(ETSAVLEDPanelEdgeStyle Style, float WidthCm, float HeightCm, float RadiusMeters)
 	{
-		const float Cut = EdgeCutFraction;
+		const FVector2D TopLeft(0.0f, 0.0f);
+		const FVector2D TopRight(1.0f, 0.0f);
+		const FVector2D BottomRight(1.0f, 1.0f);
+		const FVector2D BottomLeft(0.0f, 1.0f);
 		TArray<FVector2D> Points;
 		switch (Style)
 		{
 		case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft:
-			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}};
+			return {TopLeft, TopRight, BottomLeft};
 		case ETSAVLEDPanelEdgeStyle::DiagonalTopRight:
-			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}};
+			return {TopLeft, TopRight, BottomRight};
 		case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft:
-			return {{0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+			return {TopLeft, BottomRight, BottomLeft};
 		case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight:
-			return {{1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+			return {TopRight, BottomRight, BottomLeft};
 		case ETSAVLEDPanelEdgeStyle::RoundTopLeft:
-			Points = {{Cut, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}, {0.0f, Cut}};
-			AddArc(Points, FVector2D(Cut, Cut), 180.0f, 270.0f, false);
+			Points = {TopLeft, TopRight};
+			AddCornerSpanningArc(Points, TopRight, BottomLeft, BottomRight, WidthCm, HeightCm, RadiusMeters);
+			Points.Add(BottomLeft);
 			return Points;
 		case ETSAVLEDPanelEdgeStyle::RoundTopRight:
-			Points = {{0.0f, 0.0f}, {1.0f - Cut, 0.0f}};
-			AddArc(Points, FVector2D(1.0f - Cut, Cut), -90.0f, 0.0f, true);
-			Points.Append({{1.0f, 1.0f}, {0.0f, 1.0f}});
+			Points = {TopLeft, TopRight, BottomRight};
+			AddCornerSpanningArc(Points, BottomRight, TopLeft, BottomLeft, WidthCm, HeightCm, RadiusMeters);
 			return Points;
 		case ETSAVLEDPanelEdgeStyle::RoundBottomLeft:
-			Points = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {Cut, 1.0f}};
-			AddArc(Points, FVector2D(Cut, 1.0f - Cut), 90.0f, 180.0f, true);
+			Points = {TopLeft};
+			AddCornerSpanningArc(Points, TopLeft, BottomRight, TopRight, WidthCm, HeightCm, RadiusMeters);
+			Points.Append({BottomRight, BottomLeft});
 			return Points;
 		case ETSAVLEDPanelEdgeStyle::RoundBottomRight:
-			Points = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f - Cut}};
-			AddArc(Points, FVector2D(1.0f - Cut, 1.0f - Cut), 0.0f, 90.0f, true);
-			Points.Add(FVector2D(0.0f, 1.0f));
+			Points = {TopRight, BottomRight, BottomLeft};
+			AddCornerSpanningArc(Points, BottomLeft, TopRight, TopLeft, WidthCm, HeightCm, RadiusMeters);
 			return Points;
 		default:
-			return {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+			return {TopLeft, TopRight, BottomRight, BottomLeft};
 		}
 	}
 
@@ -147,7 +197,87 @@ namespace TSAVLEDWall::Private
 		}
 	}
 
-	void AppendCabinetBody(
+	float GetMaximumPolygonInset(const TArray<FVector2D>& Polygon, float Width, float Height)
+	{
+		if (Polygon.Num() < 3)
+		{
+			return 0.0f;
+		}
+
+		TArray<FVector2D> PhysicalPoints;
+		PhysicalPoints.Reserve(Polygon.Num());
+		FVector2D InteriorPoint = FVector2D::ZeroVector;
+		float TwiceArea = 0.0f;
+		for (int32 Index = 0; Index < Polygon.Num(); ++Index)
+		{
+			const FVector2D Point(Polygon[Index].X * Width, Polygon[Index].Y * Height);
+			const FVector2D Next(Polygon[(Index + 1) % Polygon.Num()].X * Width, Polygon[(Index + 1) % Polygon.Num()].Y * Height);
+			PhysicalPoints.Add(Point);
+			InteriorPoint += Point;
+			TwiceArea += Cross2D(Point, Next);
+		}
+		InteriorPoint /= Polygon.Num();
+		const float Orientation = TwiceArea >= 0.0f ? 1.0f : -1.0f;
+		float MaximumInset = TNumericLimits<float>::Max();
+		for (int32 Index = 0; Index < PhysicalPoints.Num(); ++Index)
+		{
+			const FVector2D Point = PhysicalPoints[Index];
+			const FVector2D Edge = PhysicalPoints[(Index + 1) % PhysicalPoints.Num()] - Point;
+			const FVector2D InwardNormal = FVector2D(-Edge.Y * Orientation, Edge.X * Orientation).GetSafeNormal();
+			MaximumInset = FMath::Min(MaximumInset, FVector2D::DotProduct(InteriorPoint - Point, InwardNormal));
+		}
+		return FMath::Max(MaximumInset, 0.0f);
+	}
+
+	TArray<FVector2D> MakeInsetPolygon(const TArray<FVector2D>& Polygon, float Width, float Height, float Inset)
+	{
+		TArray<FVector2D> PhysicalPoints;
+		PhysicalPoints.Reserve(Polygon.Num());
+		float TwiceArea = 0.0f;
+		for (int32 Index = 0; Index < Polygon.Num(); ++Index)
+		{
+			const FVector2D Point(Polygon[Index].X * Width, Polygon[Index].Y * Height);
+			const FVector2D Next(Polygon[(Index + 1) % Polygon.Num()].X * Width, Polygon[(Index + 1) % Polygon.Num()].Y * Height);
+			PhysicalPoints.Add(Point);
+			TwiceArea += Cross2D(Point, Next);
+		}
+		const float Orientation = TwiceArea >= 0.0f ? 1.0f : -1.0f;
+
+		TArray<FVector2D> InsetPolygon;
+		InsetPolygon.SetNumUninitialized(Polygon.Num());
+		for (int32 Index = 0; Index < PhysicalPoints.Num(); ++Index)
+		{
+			const FVector2D Previous = PhysicalPoints[(Index + PhysicalPoints.Num() - 1) % PhysicalPoints.Num()];
+			const FVector2D Point = PhysicalPoints[Index];
+			const FVector2D Next = PhysicalPoints[(Index + 1) % PhysicalPoints.Num()];
+			const FVector2D PreviousDirection = (Point - Previous).GetSafeNormal();
+			const FVector2D NextDirection = (Next - Point).GetSafeNormal();
+			const FVector2D PreviousNormal(-PreviousDirection.Y * Orientation, PreviousDirection.X * Orientation);
+			const FVector2D NextNormal(-NextDirection.Y * Orientation, NextDirection.X * Orientation);
+			const FVector2D PreviousLinePoint = Point + PreviousNormal * Inset;
+			const FVector2D NextLinePoint = Point + NextNormal * Inset;
+			const float Denominator = Cross2D(PreviousDirection, NextDirection);
+			FVector2D InsetPoint;
+			if (FMath::Abs(Denominator) > KINDA_SMALL_NUMBER)
+			{
+				const float PreviousDistance = Cross2D(NextLinePoint - PreviousLinePoint, NextDirection) / Denominator;
+				InsetPoint = PreviousLinePoint + PreviousDirection * PreviousDistance;
+			}
+			else
+			{
+				FVector2D AverageNormal = PreviousNormal + NextNormal;
+				if (!AverageNormal.Normalize())
+				{
+					AverageNormal = PreviousNormal;
+				}
+				InsetPoint = Point + AverageNormal * Inset;
+			}
+			InsetPolygon[Index] = FVector2D(InsetPoint.X / Width, InsetPoint.Y / Height);
+		}
+		return InsetPolygon;
+	}
+
+	void AppendChamferedCabinetBody(
 		FMeshBuffers& Mesh,
 		const TArray<FVector2D>& Polygon,
 		const FVector& Center,
@@ -157,40 +287,36 @@ namespace TSAVLEDWall::Private
 		float Width,
 		float Height,
 		float FrontDepth,
-		float BackDepth,
-		bool bIncludeFront)
+		float RequestedBackDepth)
 	{
+		// The rear outline is offset from every front edge by exactly the same
+		// distance that it travels backward. This makes all cabinet sides true 45
+		// degree faces, including internal panel edges and shaped boundaries.
+		const float RequestedInset = FMath::Max(FrontDepth - RequestedBackDepth, 0.1f);
+		const float MaximumInset = GetMaximumPolygonInset(Polygon, Width, Height);
+		const float AppliedInset = FMath::Min(RequestedInset, MaximumInset * 0.9f);
+		const float BackDepth = FrontDepth - AppliedInset;
+		const TArray<FVector2D> BackPolygon = MakeInsetPolygon(Polygon, Width, Height, AppliedInset);
 		const int32 BackBase = Mesh.Vertices.Num();
-		for (const FVector2D& Point : Polygon)
+		for (const FVector2D& Point : BackPolygon)
 		{
 			Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, VerticalUp, Width, Height, BackDepth), -Normal, Point, -Horizontal);
 		}
-		for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
+		for (int32 Index = 1; Index + 1 < BackPolygon.Num(); ++Index)
 		{
 			Mesh.AddTriangle(BackBase, BackBase + Index + 1, BackBase + Index);
-		}
-
-		if (bIncludeFront)
-		{
-			const int32 FrontBase = Mesh.Vertices.Num();
-			for (const FVector2D& Point : Polygon)
-			{
-				Mesh.AddVertex(ToWorldPoint(Point, Center, Normal, Horizontal, VerticalUp, Width, Height, FrontDepth), Normal, Point, Horizontal);
-			}
-			for (int32 Index = 1; Index + 1 < Polygon.Num(); ++Index)
-			{
-				Mesh.AddTriangle(FrontBase, FrontBase + Index, FrontBase + Index + 1);
-			}
 		}
 
 		for (int32 Index = 0; Index < Polygon.Num(); ++Index)
 		{
 			const FVector2D A = Polygon[Index];
 			const FVector2D B = Polygon[(Index + 1) % Polygon.Num()];
+			const FVector2D BackA2D = BackPolygon[Index];
+			const FVector2D BackB2D = BackPolygon[(Index + 1) % BackPolygon.Num()];
 			const FVector FrontA = ToWorldPoint(A, Center, Normal, Horizontal, VerticalUp, Width, Height, FrontDepth);
 			const FVector FrontB = ToWorldPoint(B, Center, Normal, Horizontal, VerticalUp, Width, Height, FrontDepth);
-			const FVector BackA = ToWorldPoint(A, Center, Normal, Horizontal, VerticalUp, Width, Height, BackDepth);
-			const FVector BackB = ToWorldPoint(B, Center, Normal, Horizontal, VerticalUp, Width, Height, BackDepth);
+			const FVector BackA = ToWorldPoint(BackA2D, Center, Normal, Horizontal, VerticalUp, Width, Height, BackDepth);
+			const FVector BackB = ToWorldPoint(BackB2D, Center, Normal, Horizontal, VerticalUp, Width, Height, BackDepth);
 			const FVector SideNormal = FVector::CrossProduct(FrontB - FrontA, BackA - FrontA).GetSafeNormal();
 			const FVector SideTangent = (FrontB - FrontA).GetSafeNormal();
 			const int32 SideBase = Mesh.Vertices.Num();
@@ -390,12 +516,9 @@ void ATSAVLEDWall::BuildRowTransforms(TArray<FVector>& OutFrontCenters, TArray<f
 		OutPitchDegrees[Row] = OutPitchDegrees[Row - 1] + SeamAngle;
 	}
 
-	const float FacingCenter = (OutPitchDegrees[0] + OutPitchDegrees.Last()) * 0.5f;
-	for (float& Pitch : OutPitchDegrees)
-	{
-		Pitch -= FacingCenter;
-	}
-
+	// Keep the first row on the actor's front plane. A +90/-90 seam therefore
+	// folds the following row all the way under/over without tilting the main
+	// wall by half the requested bend.
 	for (int32 Row = 1; Row < SafeRows; ++Row)
 	{
 		const FVector PreviousDown = FRotator(OutPitchDegrees[Row - 1], 0.0f, 0.0f).RotateVector(-FVector::ZAxisVector);
@@ -478,7 +601,17 @@ void ATSAVLEDWall::UpdateGeometry()
 		for (int32 EdgeColumn = 0; EdgeColumn <= Columns; ++EdgeColumn)
 		{
 			FVector LocalHorizontal;
-			if (EdgeColumn == 0)
+			const bool bEnabledOnLeft = EdgeColumn > 0 && IsPanelEnabled(EdgeColumn - 1, Row);
+			const bool bEnabledOnRight = EdgeColumn < Columns && IsPanelEnabled(EdgeColumn, Row);
+			if (bEnabledOnLeft && !bEnabledOnRight)
+			{
+				LocalHorizontal = ColumnHorizontals[EdgeColumn - 1];
+			}
+			else if (bEnabledOnRight && !bEnabledOnLeft)
+			{
+				LocalHorizontal = ColumnHorizontals[EdgeColumn];
+			}
+			else if (EdgeColumn == 0)
 			{
 				LocalHorizontal = ColumnHorizontals[0];
 			}
@@ -538,9 +671,9 @@ void ATSAVLEDWall::UpdateGeometry()
 			const FVector Normal = FVector::CrossProduct(Down, Horizontal).GetSafeNormal();
 			const FVector FrontCenter = (TopLeft + TopRight + BottomRight + BottomLeft) * 0.25f;
 			const FVector CabinetCenter = FrontCenter - Normal * DisplayFrontDepth;
-			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row));
+			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row), EffectivePanelWidth, EffectivePanelHeight, RoundEdgeRadiusMeters);
 			AppendFrontFace(DisplayMesh, Polygon, TopLeft, TopRight, BottomRight, BottomLeft, Column, Row, Columns, Rows);
-			AppendCabinetBody(FrameMesh, Polygon, CabinetCenter, Normal, Horizontal, VerticalUp, CabinetWidth, CabinetHeight, CabinetFrontDepth, BackDepth, false);
+			AppendChamferedCabinetBody(FrameMesh, Polygon, CabinetCenter, Normal, Horizontal, VerticalUp, CabinetWidth, CabinetHeight, CabinetFrontDepth, BackDepth);
 
 			if (ChamferSize > 0.0f)
 			{
@@ -653,6 +786,7 @@ void ATSAVLEDWall::NormalizeShapeSettings()
 	{
 		Angle = TSAVLEDWall::Private::SanitizeAngle(Angle);
 	}
+	RoundEdgeRadiusMeters = TSAVLEDWall::Private::SanitizeRoundRadiusMeters(RoundEdgeRadiusMeters);
 
 	PanelEdgeStyles.SetNum(Columns * Rows);
 	for (ETSAVLEDPanelEdgeStyle& Style : PanelEdgeStyles)

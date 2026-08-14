@@ -41,6 +41,100 @@ namespace TSAVLEDBuilder::Private
 		return FMath::Clamp(FMath::RoundToFloat(Angle * 2.0f) * 0.5f, -90.0f, 90.0f);
 	}
 
+	float SnapRoundRadiusMeters(float RadiusMeters)
+	{
+		return FMath::IsFinite(RadiusMeters)
+			? FMath::Max(FMath::RoundToFloat(RadiusMeters * 2.0f) * 0.5f, 0.5f)
+			: 0.5f;
+	}
+
+	float Cross2D(const FVector2D& A, const FVector2D& B)
+	{
+		return A.X * B.Y - A.Y * B.X;
+	}
+
+	void AddCornerSpanningArc(
+		TArray<FVector2D>& Points,
+		const FVector2D& Start,
+		const FVector2D& End,
+		const FVector2D& OppositeCorner,
+		float WidthCm,
+		float HeightCm,
+		float RadiusMeters)
+	{
+		auto ToPhysical = [WidthCm, HeightCm](const FVector2D& Point)
+		{
+			return FVector2D(Point.X * WidthCm, Point.Y * HeightCm);
+		};
+		const FVector2D PhysicalStart = ToPhysical(Start);
+		const FVector2D PhysicalEnd = ToPhysical(End);
+		const FVector2D Midpoint = (PhysicalStart + PhysicalEnd) * 0.5f;
+		const FVector2D Chord = PhysicalEnd - PhysicalStart;
+		const float HalfChord = Chord.Size() * 0.5f;
+		const float RadiusCm = FMath::Max(SnapRoundRadiusMeters(RadiusMeters) * 100.0f, HalfChord + 0.01f);
+		FVector2D BulgeDirection = ToPhysical(OppositeCorner) - Midpoint;
+		if (!BulgeDirection.Normalize())
+		{
+			BulgeDirection = FVector2D(-Chord.Y, Chord.X).GetSafeNormal();
+		}
+		const float CenterDistance = FMath::Sqrt(FMath::Max(RadiusCm * RadiusCm - HalfChord * HalfChord, 0.0f));
+		const FVector2D Center = Midpoint - BulgeDirection * CenterDistance;
+		const FVector2D StartVector = PhysicalStart - Center;
+		const FVector2D EndVector = PhysicalEnd - Center;
+		float SweepRadians = FMath::Atan2(Cross2D(StartVector, EndVector), FVector2D::DotProduct(StartVector, EndVector));
+		if (FMath::IsNearlyZero(SweepRadians))
+		{
+			SweepRadians = PI;
+		}
+		for (int32 Step = 1; Step < 12; ++Step)
+		{
+			const float Angle = SweepRadians * static_cast<float>(Step) / 12.0f;
+			const float CosAngle = FMath::Cos(Angle);
+			const float SinAngle = FMath::Sin(Angle);
+			const FVector2D Rotated(
+				StartVector.X * CosAngle - StartVector.Y * SinAngle,
+				StartVector.X * SinAngle + StartVector.Y * CosAngle);
+			const FVector2D PhysicalPoint = Center + Rotated;
+			Points.Emplace(PhysicalPoint.X / WidthCm, PhysicalPoint.Y / HeightCm);
+		}
+	}
+
+	TArray<FVector2D> MakePanelOutlineNormalized(ETSAVLEDPanelEdgeStyle Style, float WidthCm, float HeightCm, float RadiusMeters)
+	{
+		const FVector2D TopLeft(0.0f, 0.0f);
+		const FVector2D TopRight(1.0f, 0.0f);
+		const FVector2D BottomRight(1.0f, 1.0f);
+		const FVector2D BottomLeft(0.0f, 1.0f);
+		TArray<FVector2D> Points;
+		switch (Style)
+		{
+		case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft: return {TopLeft, TopRight, BottomLeft};
+		case ETSAVLEDPanelEdgeStyle::DiagonalTopRight: return {TopLeft, TopRight, BottomRight};
+		case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft: return {TopLeft, BottomRight, BottomLeft};
+		case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight: return {TopRight, BottomRight, BottomLeft};
+		case ETSAVLEDPanelEdgeStyle::RoundTopLeft:
+			Points = {TopLeft, TopRight};
+			AddCornerSpanningArc(Points, TopRight, BottomLeft, BottomRight, WidthCm, HeightCm, RadiusMeters);
+			Points.Add(BottomLeft);
+			return Points;
+		case ETSAVLEDPanelEdgeStyle::RoundTopRight:
+			Points = {TopLeft, TopRight, BottomRight};
+			AddCornerSpanningArc(Points, BottomRight, TopLeft, BottomLeft, WidthCm, HeightCm, RadiusMeters);
+			return Points;
+		case ETSAVLEDPanelEdgeStyle::RoundBottomLeft:
+			Points = {TopLeft};
+			AddCornerSpanningArc(Points, TopLeft, BottomRight, TopRight, WidthCm, HeightCm, RadiusMeters);
+			Points.Append({BottomRight, BottomLeft});
+			return Points;
+		case ETSAVLEDPanelEdgeStyle::RoundBottomRight:
+			Points = {TopRight, BottomRight, BottomLeft};
+			AddCornerSpanningArc(Points, BottomLeft, TopRight, TopLeft, WidthCm, HeightCm, RadiusMeters);
+			return Points;
+		default:
+			return {TopLeft, TopRight, BottomRight, BottomLeft};
+		}
+	}
+
 	float GetDerivedColumnYaw(const TArray<float>* SeamAngles, int32 Columns, int32 Column)
 	{
 		const int32 SafeColumns = FMath::Clamp(Columns, 1, 64);
@@ -179,6 +273,9 @@ namespace TSAVLEDBuilder::Private
 		SLATE_BEGIN_ARGS(SPanelLayoutPreview) {}
 			SLATE_ATTRIBUTE(int32, Columns)
 			SLATE_ATTRIBUTE(int32, Rows)
+			SLATE_ATTRIBUTE(float, PanelWidthCm)
+			SLATE_ATTRIBUTE(float, PanelHeightCm)
+			SLATE_ATTRIBUTE(float, RoundRadiusMeters)
 			SLATE_ARGUMENT(const TArray<float>*, SeamAngles)
 			SLATE_ARGUMENT(const TArray<ETSAVLEDPanelEdgeStyle>*, EdgeStyles)
 			SLATE_EVENT(FOnPanelEdgeClicked, OnPanelEdgeClicked)
@@ -188,6 +285,9 @@ namespace TSAVLEDBuilder::Private
 		{
 			Columns = Args._Columns;
 			Rows = Args._Rows;
+			PanelWidthCm = Args._PanelWidthCm;
+			PanelHeightCm = Args._PanelHeightCm;
+			RoundRadiusMeters = Args._RoundRadiusMeters;
 			SeamAngles = Args._SeamAngles;
 			EdgeStyles = Args._EdgeStyles;
 			OnPanelEdgeClicked = Args._OnPanelEdgeClicked;
@@ -317,24 +417,27 @@ namespace TSAVLEDBuilder::Private
 
 		TArray<FVector2D> MakeOutline(ETSAVLEDPanelEdgeStyle Style, const FSlateRect& Rect) const
 		{
-			const float CutX = FMath::Min((Rect.Right - Rect.Left) * 0.28f, 18.0f);
-			const float CutY = FMath::Min((Rect.Bottom - Rect.Top) * 0.28f, 18.0f);
-			switch (Style)
+			const TArray<FVector2D> Normalized = MakePanelOutlineNormalized(
+				Style,
+				FMath::Max(PanelWidthCm.Get(), 1.0f),
+				FMath::Max(PanelHeightCm.Get(), 1.0f),
+				RoundRadiusMeters.Get());
+			TArray<FVector2D> Outline;
+			Outline.Reserve(Normalized.Num());
+			for (const FVector2D& Point : Normalized)
 			{
-			case ETSAVLEDPanelEdgeStyle::DiagonalTopLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Left, Rect.Bottom}};
-			case ETSAVLEDPanelEdgeStyle::DiagonalTopRight: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}};
-			case ETSAVLEDPanelEdgeStyle::DiagonalBottomLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
-			case ETSAVLEDPanelEdgeStyle::DiagonalBottomRight: return {{Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
-			case ETSAVLEDPanelEdgeStyle::RoundTopLeft: return {{Rect.Left + CutX, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}, {Rect.Left, Rect.Top + CutY}, {Rect.Left + CutX * 0.08f, Rect.Top + CutY * 0.62f}, {Rect.Left + CutX * 0.30f, Rect.Top + CutY * 0.30f}, {Rect.Left + CutX * 0.62f, Rect.Top + CutY * 0.08f}};
-			case ETSAVLEDPanelEdgeStyle::RoundTopRight: return {{Rect.Left, Rect.Top}, {Rect.Right - CutX, Rect.Top}, {Rect.Right - CutX * 0.62f, Rect.Top + CutY * 0.08f}, {Rect.Right - CutX * 0.30f, Rect.Top + CutY * 0.30f}, {Rect.Right - CutX * 0.08f, Rect.Top + CutY * 0.62f}, {Rect.Right, Rect.Top + CutY}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
-			case ETSAVLEDPanelEdgeStyle::RoundBottomLeft: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left + CutX, Rect.Bottom}, {Rect.Left + CutX * 0.62f, Rect.Bottom - CutY * 0.08f}, {Rect.Left + CutX * 0.30f, Rect.Bottom - CutY * 0.30f}, {Rect.Left + CutX * 0.08f, Rect.Bottom - CutY * 0.62f}, {Rect.Left, Rect.Bottom - CutY}};
-			case ETSAVLEDPanelEdgeStyle::RoundBottomRight: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom - CutY}, {Rect.Right - CutX * 0.08f, Rect.Bottom - CutY * 0.62f}, {Rect.Right - CutX * 0.30f, Rect.Bottom - CutY * 0.30f}, {Rect.Right - CutX * 0.62f, Rect.Bottom - CutY * 0.08f}, {Rect.Right - CutX, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
-			default: return {{Rect.Left, Rect.Top}, {Rect.Right, Rect.Top}, {Rect.Right, Rect.Bottom}, {Rect.Left, Rect.Bottom}};
+				Outline.Emplace(
+					FMath::Lerp(Rect.Left, Rect.Right, Point.X),
+					FMath::Lerp(Rect.Top, Rect.Bottom, Point.Y));
 			}
+			return Outline;
 		}
 
 		TAttribute<int32> Columns;
 		TAttribute<int32> Rows;
+		TAttribute<float> PanelWidthCm;
+		TAttribute<float> PanelHeightCm;
+		TAttribute<float> RoundRadiusMeters;
 		const TArray<float>* SeamAngles = nullptr;
 		const TArray<ETSAVLEDPanelEdgeStyle>* EdgeStyles = nullptr;
 		FOnPanelEdgeClicked OnPanelEdgeClicked;
@@ -696,7 +799,7 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("RowAnglesHelp", "Set the vertical bend at each row seam from -90.0 to +90.0 degrees in 0.5 degree steps. Row and column bends share the same gapless front corner grid."))
+					.Text(LOCTEXT("RowAnglesHelp", "Set the vertical bend at each row seam from -90.0 to +90.0 degrees in 0.5 degree steps. The first row stays forward-facing, so a 90 degree seam can fold a flat enabled run underneath as a bottom screen. Row and column bends share the same gapless front corner grid."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 				]
@@ -716,9 +819,39 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 5.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("PanelEdgesHelp", "Choose a shape, then click panels to apply it. Empty removes the cabinet and lets the outer trim follow the remaining shape. Right-click any cell to restore Square."))
+					.Text(LOCTEXT("PanelEdgesHelp", "Choose a shape, then click panels to apply it. Rounded edges span corner-to-corner using the radius below. Empty removes the cabinet and lets the outer trim follow the remaining shape. Right-click any cell to restore Square."))
 					.AutoWrapText(true)
 					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 7.0f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("RoundRadiusLabel", "Rounded edge radius"))
+						.ToolTipText(LOCTEXT("RoundRadiusHelp", "Circle radius for all rounded corner-to-corner panel edges, starting at 0.5 m in 0.5 m steps."))
+					]
+					+ SHorizontalBox::Slot().AutoWidth()
+					[
+						SNew(SBox).WidthOverride(110.0f)
+						[
+							SNew(SNumericEntryBox<float>)
+							.Value_Lambda([this]() { return TOptional<float>(RoundEdgeRadiusMeters); })
+							.MinValue(0.5f)
+							.MinSliderValue(0.5f)
+							.MaxSliderValue(20.0f)
+							.Delta(0.5f)
+							.MinFractionalDigits(1)
+							.MaxFractionalDigits(1)
+							.AllowSpin(true)
+							.OnValueChanged_Lambda([this](float NewValue) { RoundEdgeRadiusMeters = SnapRoundRadiusMeters(NewValue); })
+						]
+					]
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(STextBlock).Text(LOCTEXT("MetersUnit", "m"))
+					]
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 7.0f)
 				[
@@ -731,6 +864,9 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 						SNew(SPanelLayoutPreview)
 						.Columns_Lambda([this]() { return Columns; })
 						.Rows_Lambda([this]() { return Rows; })
+						.PanelWidthCm_Lambda([this]() { return PanelWidthCm; })
+						.PanelHeightCm_Lambda([this]() { return PanelHeightCm; })
+						.RoundRadiusMeters_Lambda([this]() { return RoundEdgeRadiusMeters; })
 						.SeamAngles(&ColumnSeamAnglesDegrees)
 						.EdgeStyles(&PanelEdgeStyles)
 						.OnPanelEdgeClicked(FOnPanelEdgeClicked::CreateSP(this, &STSAVLEDWallBuilder::ApplyPanelStyle))
@@ -1026,6 +1162,7 @@ FReply STSAVLEDWallBuilder::LoadSelectedWall()
 	PanelEdgeStyles.SetNum(Columns * Rows);
 	PanelGapCm = Wall->PanelGapCm;
 	BorderCm = Wall->BorderCm;
+	RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SnapRoundRadiusMeters(Wall->RoundEdgeRadiusMeters);
 	CanvasWidth = Wall->CanvasResolution.X;
 	CanvasHeight = Wall->CanvasResolution.Y;
 	CanvasX = Wall->CanvasPosition.X;
@@ -1142,6 +1279,7 @@ void STSAVLEDWallBuilder::ApplySettings(ATSAVLEDWall& Wall) const
 	}
 	Wall.PanelGapCm = FMath::Max(PanelGapCm, 0.0f);
 	Wall.BorderCm = FMath::Max(BorderCm, 0.0f);
+	Wall.RoundEdgeRadiusMeters = TSAVLEDBuilder::Private::SnapRoundRadiusMeters(RoundEdgeRadiusMeters);
 	Wall.bShowPanelSeams = bShowSeams;
 	Wall.LinkPattern = bSerpentine ? ETSAVLEDLinkPattern::RowsSerpentine : ETSAVLEDLinkPattern::RowsLeftToRight;
 	Wall.CanvasResolution = FIntPoint(FMath::Max(CanvasWidth, 1), FMath::Max(CanvasHeight, 1));
