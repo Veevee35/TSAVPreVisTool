@@ -63,8 +63,8 @@ namespace TSAVLEDWall::Private
 		}
 		const double HalfChordCm = FMath::Max(static_cast<double>(PanelWidthCm) * 0.25, 0.0001);
 		const double RadiusCm = FMath::Max(FMath::Abs(RadiusMeters) * 100.0, HalfChordCm);
-		const double HalfAngleRadians = FMath::Asin(FMath::Clamp(HalfChordCm / RadiusCm, 0.0, 1.0));
-		return SanitizeAngle(static_cast<float>(FMath::Sign(RadiusMeters) * FMath::RadiansToDegrees(HalfAngleRadians * 2.0)));
+		const double TangentAngleRadians = FMath::Asin(FMath::Clamp(HalfChordCm / RadiusCm, 0.0, 1.0));
+		return SanitizeAngle(static_cast<float>(FMath::Sign(RadiusMeters) * FMath::RadiansToDegrees(TangentAngleRadians)));
 	}
 
 	float Cross2D(const FVector2D& A, const FVector2D& B)
@@ -196,10 +196,14 @@ namespace TSAVLEDWall::Private
 		const double LocalAlpha = bFirstHalf ? NormalizedX * 2.0 : (NormalizedX - 0.5) * 2.0;
 		const double ChordLengthCm = PanelWidthCm * 0.5;
 		const double HalfChordCm = ChordLengthCm * 0.5;
-		const double HalfAngleRadians = FMath::DegreesToRadians(FMath::Abs(static_cast<double>(AngleDegrees)) * 0.5);
-		const double EffectiveRadiusCm = HalfChordCm / FMath::Max(FMath::Sin(HalfAngleRadians), UE_DOUBLE_SMALL_NUMBER);
+		// The control is the tangent deflection at each end of this half-panel.
+		// A circular arc's total sweep is twice that value. This matches the visual
+		// meaning of a seam angle: entering 22.5 degrees visibly reaches a 22.5
+		// degree face tangent instead of silently reducing it to 11.25 degrees.
+		const double TangentAngleRadians = FMath::DegreesToRadians(FMath::Abs(static_cast<double>(AngleDegrees)));
+		const double EffectiveRadiusCm = HalfChordCm / FMath::Max(FMath::Sin(TangentAngleRadians), UE_DOUBLE_SMALL_NUMBER);
 		const double AlongChordCm = (LocalAlpha - 0.5) * ChordLengthCm;
-		const double EndpointDistanceCm = EffectiveRadiusCm * FMath::Cos(HalfAngleRadians);
+		const double EndpointDistanceCm = EffectiveRadiusCm * FMath::Cos(TangentAngleRadians);
 		const double ArcDistanceCm = FMath::Sqrt(FMath::Max(EffectiveRadiusCm * EffectiveRadiusCm - AlongChordCm * AlongChordCm, 0.0));
 		return FMath::Sign(AngleDegrees) * (ArcDistanceCm - EndpointDistanceCm);
 	}

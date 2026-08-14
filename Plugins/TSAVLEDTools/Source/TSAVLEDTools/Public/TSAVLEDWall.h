@@ -145,11 +145,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape")
 	TArray<bool> ColumnInternalCurveEnabled;
 
-	/** Signed circular bend of the left internal half of each column, in 0.5 degree steps. */
+	/** Signed circular tangent deflection of the left internal half of each column, in 0.5 degree steps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
 	TArray<float> ColumnInternalCurveAngleADegrees;
 
-	/** Signed circular bend of the right internal half of each column, in 0.5 degree steps. */
+	/** Signed circular tangent deflection of the right internal half of each column, in 0.5 degree steps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Shape", meta = (ClampMin = "-90.0", ClampMax = "90.0"))
 	TArray<float> ColumnInternalCurveAngleBDegrees;
 
