@@ -24,6 +24,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Project")
 	void MarkDirty(bool bInDirty = true);
 
+	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Project")
+	bool SaveProject(const FString& FilePath = FString());
+
+	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Project")
+	bool LoadProject(const FString& FilePath = FString());
+
+	UFUNCTION(BlueprintPure, Category = "TSAV PreVis|Project")
+	FString GetCurrentProjectPath() const { return CurrentProjectPath; }
+
+	UFUNCTION(BlueprintPure, Category = "TSAV PreVis|Project")
+	FString GetDefaultProjectPath() const;
+
 	UFUNCTION(BlueprintPure, Category = "TSAV PreVis|Project")
 	FGuid GetProjectId() const { return ProjectId; }
 
@@ -45,4 +57,7 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category = "TSAV PreVis|Project")
 	bool bDirty = false;
+
+	UPROPERTY(VisibleAnywhere, Category = "TSAV PreVis|Project")
+	FString CurrentProjectPath;
 };

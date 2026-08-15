@@ -16,6 +16,8 @@ public class TSAVPrevisRuntime : ModuleRules
 				"Engine",
 				"EnhancedInput",
 				"InputCore",
+				"Json",
+				"JsonUtilities",
 				"TSAVLEDTools",
 				"UMG",
 			}

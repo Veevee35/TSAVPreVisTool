@@ -29,10 +29,14 @@ class TSAVPREVISRUNTIME_API UTSAVSelectionSubsystem final : public ULocalPlayerS
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Selection")
-	bool SelectFromScreenPosition(APlayerController* PlayerController, FVector2D ScreenPosition, float TraceDistance = 1000000.0f);
+	bool SelectFromScreenPosition(APlayerController* PlayerController, FVector2D ScreenPosition, float TraceDistance = 1000000.0f, bool bAddToSelection = false);
 
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Selection")
 	bool SelectActor(AActor* Actor, bool bAddToSelection = false);
+
+	/** Outliner selection may inspect locked/hidden objects so users can unlock or reveal them. */
+	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Selection")
+	bool SelectActorFromOutliner(AActor* Actor);
 
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Selection")
 	void ClearSelection();

@@ -32,10 +32,12 @@ The first shell is implemented without a Blueprint dependency so it can be compi
 | Runtime type | Role |
 |---|---|
 | `ATSAVAppGameMode` | Selects the runtime controller/pawn and bootstraps the application scene |
-| `ATSAVPlayerController` | Owns Enhanced Input contexts, viewport navigation input, click selection, and the main UI |
+| `ATSAVPlayerController` | Owns viewport navigation, selection, gizmo interaction, keyboard commands, and the main UI |
 | `ATSAVEditPawn` | Free-flying design viewport camera |
-| `UTSAVMainWidget` | C++ UMG desktop chrome with menus, outliner, mode tools, inspector, and status bar |
-| `UTSAVProjectSubsystem` | Active project GUID, display name, and dirty state |
+| `UTSAVMainWidget` | C++ UMG desktop chrome with commands, scene outliner, editable inspector, and status bar |
+| `UTSAVCommandSubsystem` | Command history for spawn, delete, duplicate, transform, and scene-object properties |
+| `ATSAVTransformGizmoActor` | Runtime translate, rotate, and scale handles with local/world space |
+| `UTSAVProjectSubsystem` | Active project state plus versioned `.tsav` JSON save/load |
 | `UTSAVModeSubsystem` | One top-level mode over the shared scene |
 | `UTSAVSelectionSubsystem` | Runtime local-player selection independent of Unreal Editor selection |
 | `UTSAVSceneObjectComponent` | Persistent object GUID, display name, semantic type, lock, and visibility |
@@ -84,9 +86,15 @@ Media / NDI / Camera / Test Pattern / Switcher
 
 `UTSAVVideoFeed` should expose a display texture, resolution, display name, liveness, and durable endpoint ID. `ATSAVMediaSurfaceActor` should retain its existing `UMediaSource` path for compatibility while gaining an optional feed/texture path. This change belongs after the runtime shell and selection foundation are verified; it should not be implemented as a one-off camera-to-material assignment.
 
-## Persistence direction
+## Runtime authoring and persistence
 
-The primary project format will be a versioned structured `.tsav` document. Runtime scene objects use `FGuid` identities; actor instance names are not durable references. Asset references use soft paths or durable equipment definition IDs. Unreal `USaveGame` is reserved for local application preferences, recent files, and recovery metadata.
+The primary project format is a versioned structured `.tsav` JSON document. Runtime scene objects use stable `FGuid` identities; actor instance names are not durable references. Version 1 stores the project ID/name and each scene object's class path, semantic type, transform, display name, lock state, and visibility. Save/load restores those identities and clears command history at the document boundary. The format reserves `videoRoutes` and `settings` sections for later phases. Unreal `USaveGame` remains reserved for local application preferences, recent files, and recovery metadata.
+
+Gizmo drags are transactions: continuous pointer updates preview the transform, while pointer release adds one transform command. Inspector edits, lock/visibility changes, spawn, duplicate, and delete use the same command history, so all supported scene mutations have symmetric undo and redo behavior.
+
+## Standalone packaging boundary
+
+`LiveEventTest.uproject` disables engine plugins by default and explicitly enables only the two TSAV runtime plugins. `LiveEventTestEditor.Target.cs` owns the broad development authoring stack. Because Unreal cooking runs in an editor host, `Build/Package-TSAVPreVis.ps1` additionally disables editor-only top-level plugins for the cook and explicitly cooks `/Game/TSAV/App/L_TSAV_App`. The Windows runtime config uses `UGameEngine` and `UGameViewportClient`; legacy nDisplay engine overrides no longer leak into the executable.
 
 ## Phase boundaries
 

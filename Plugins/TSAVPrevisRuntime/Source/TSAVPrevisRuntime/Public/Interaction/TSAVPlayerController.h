@@ -12,6 +12,7 @@
 class UInputAction;
 class UInputMappingContext;
 class UTSAVMainWidget;
+class ATSAVTransformGizmoActor;
 
 /** Runtime controller that owns TSAV input contexts and viewport interaction. */
 UCLASS()
@@ -21,6 +22,7 @@ class TSAVPREVISRUNTIME_API ATSAVPlayerController final : public APlayerControll
 
 public:
 	ATSAVPlayerController();
+	virtual void PlayerTick(float DeltaTime) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -37,7 +39,28 @@ private:
 	void LookPitch(const FInputActionValue& Value);
 	void AdjustMoveSpeed(const FInputActionValue& Value);
 	void SelectAtCursor(const FInputActionValue& Value);
+	void EndPrimaryInteraction(const FInputActionValue& Value);
 	void ReturnToEditMode(const FInputActionValue& Value);
+	void SetTranslateMode(const FInputActionValue& Value);
+	void SetRotateMode(const FInputActionValue& Value);
+	void SetScaleMode(const FInputActionValue& Value);
+	void ToggleCoordinateSpace(const FInputActionValue& Value);
+	void DeleteSelection(const FInputActionValue& Value);
+	void DuplicateSelection(const FInputActionValue& Value);
+	void UndoCommand(const FInputActionValue& Value);
+	void RedoCommand(const FInputActionValue& Value);
+	void SaveProject(const FInputActionValue& Value);
+	void LoadProject(const FInputActionValue& Value);
+	void SpawnCube(const FInputActionValue& Value);
+	bool BeginGizmoDrag(const FVector2D& ScreenPosition);
+	void UpdateGizmoDrag();
+	void EndGizmoDrag(bool bCancel);
+	bool GetCursorRay(FVector& OutOrigin, FVector& OutDirection, FVector2D* OutScreenPosition = nullptr) const;
+	static bool GetAxisRayParameter(const FVector& RayOrigin, const FVector& RayDirection, const FVector& AxisOrigin, const FVector& AxisDirection, double& OutAxisParameter);
+	bool IsControlDown() const;
+
+	UFUNCTION()
+	void HandleSelectionChanged(AActor* SelectedActor);
 
 	UFUNCTION()
 	void HandleModeChanged(ETSAVAppMode NewMode, ETSAVAppMode PreviousMode);
@@ -73,5 +96,53 @@ private:
 	TObjectPtr<UInputAction> ReturnToEditAction;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> TranslateModeAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> RotateModeAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> ScaleModeAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> ToggleCoordinateSpaceAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> DeleteAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> DuplicateAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> UndoAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> RedoAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SaveAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> LoadAction;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> SpawnCubeAction;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UTSAVMainWidget> MainWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ATSAVTransformGizmoActor> TransformGizmo;
+
+	TWeakObjectPtr<AActor> DragActor;
+	FTransform DragStartTransform;
+	FVector DragAxisOrigin = FVector::ZeroVector;
+	FVector DragWorldAxis = FVector::XAxisVector;
+	FVector2D DragStartScreenPosition = FVector2D::ZeroVector;
+	double DragStartAxisParameter = 0.0;
+	int32 DragAxisIndex = 0;
+	bool bDraggingGizmo = false;
+	float TranslationGridSize = 10.0f;
+	float RotationGridDegrees = 15.0f;
+	float ScaleGridSize = 0.1f;
 };

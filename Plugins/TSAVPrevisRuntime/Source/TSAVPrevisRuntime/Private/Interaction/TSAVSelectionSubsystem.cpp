@@ -12,7 +12,8 @@
 bool UTSAVSelectionSubsystem::SelectFromScreenPosition(
 	APlayerController* PlayerController,
 	const FVector2D ScreenPosition,
-	const float TraceDistance)
+	const float TraceDistance,
+	const bool bAddToSelection)
 {
 	if (!PlayerController || !PlayerController->GetWorld())
 	{
@@ -35,11 +36,14 @@ bool UTSAVSelectionSubsystem::SelectFromScreenPosition(
 		ECC_Visibility,
 		QueryParams))
 	{
-		ClearSelection();
+		if (!bAddToSelection)
+		{
+			ClearSelection();
+		}
 		return false;
 	}
 
-	return SelectActor(Hit.GetActor());
+	return SelectActor(Hit.GetActor(), bAddToSelection);
 }
 
 bool UTSAVSelectionSubsystem::SelectActor(AActor* Actor, const bool bAddToSelection)
@@ -75,6 +79,26 @@ bool UTSAVSelectionSubsystem::SelectActor(AActor* Actor, const bool bAddToSelect
 	return true;
 }
 
+bool UTSAVSelectionSubsystem::SelectActorFromOutliner(AActor* Actor)
+{
+	if (!IsValid(Actor) || !Actor->FindComponentByClass<UTSAVSceneObjectComponent>())
+	{
+		return false;
+	}
+	for (AActor* SelectedActor : Selection.Actors)
+	{
+		if (SelectedActor != Actor)
+		{
+			NotifySelectionState(SelectedActor, false);
+		}
+	}
+	Selection.Actors.Reset();
+	Selection.Actors.Add(Actor);
+	NotifySelectionState(Actor, true);
+	OnSelectionChanged.Broadcast(Actor);
+	return true;
+}
+
 void UTSAVSelectionSubsystem::ClearSelection()
 {
 	if (Selection.Actors.IsEmpty())
@@ -92,7 +116,7 @@ void UTSAVSelectionSubsystem::ClearSelection()
 
 AActor* UTSAVSelectionSubsystem::GetPrimarySelection() const
 {
-	return Selection.Actors.IsEmpty() ? nullptr : Selection.Actors.Last();
+	return Selection.Actors.IsEmpty() || !IsValid(Selection.Actors.Last()) ? nullptr : Selection.Actors.Last();
 }
 
 bool UTSAVSelectionSubsystem::IsActorSelectable(const AActor* Actor)

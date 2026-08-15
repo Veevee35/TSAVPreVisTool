@@ -5,12 +5,16 @@
 #include "Core/TSAVTypes.h"
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Types/SlateEnums.h"
 
 #include "TSAVMainWidget.generated.h"
 
 class AActor;
 class UCanvasPanel;
+class UEditableTextBox;
+class UScrollBox;
 class UTextBlock;
+class UVerticalBox;
 
 /** Asset-independent runtime application chrome for the first packaged shell. */
 UCLASS()
@@ -27,6 +31,9 @@ private:
 	void BuildLayout();
 	void SetAppMode(ETSAVAppMode NewMode);
 	void UpdateInspector(AActor* SelectedActor);
+	void RefreshOutliner();
+	void RefreshProjectStatus();
+	void CommitTransformValue(int32 GroupIndex, int32 AxisIndex, const FText& Text);
 	static FText GetModeText(ETSAVAppMode Mode);
 
 	UFUNCTION()
@@ -34,6 +41,70 @@ private:
 
 	UFUNCTION()
 	void HandleModeChanged(ETSAVAppMode NewMode, ETSAVAppMode PreviousMode);
+
+	UFUNCTION()
+	void HandleCommandObjectChanged(AActor* Actor);
+
+	UFUNCTION()
+	void HandleCommandHistoryChanged();
+
+	UFUNCTION()
+	void HandleProjectChanged();
+
+	UFUNCTION()
+	void HandleOutlinerActorClicked(AActor* Actor);
+
+	UFUNCTION()
+	void NewProjectClicked();
+
+	UFUNCTION()
+	void SaveProjectClicked();
+
+	UFUNCTION()
+	void LoadProjectClicked();
+
+	UFUNCTION()
+	void AddCubeClicked();
+
+	UFUNCTION()
+	void UndoClicked();
+
+	UFUNCTION()
+	void RedoClicked();
+
+	UFUNCTION()
+	void DeleteClicked();
+
+	UFUNCTION()
+	void DuplicateClicked();
+
+	UFUNCTION()
+	void ToggleLockedClicked();
+
+	UFUNCTION()
+	void ToggleVisibleClicked();
+
+	UFUNCTION()
+	void NameCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UFUNCTION()
+	void LocationXCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void LocationYCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void LocationZCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void RotationPitchCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void RotationYawCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void RotationRollCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void ScaleXCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void ScaleYCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+	UFUNCTION()
+	void ScaleZCommitted(const FText& Text, ETextCommit::Type CommitMethod);
 
 	UFUNCTION()
 	void SelectModeClicked();
@@ -69,11 +140,32 @@ private:
 	TObjectPtr<UTextBlock> OutlinerSelectionText;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> OutlinerEntries;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> InspectorTitleText;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> InspectorBodyText;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> NameField;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UEditableTextBox>> LocationFields;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UEditableTextBox>> RotationFields;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UEditableTextBox>> ScaleFields;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> ModeStatusText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ProjectStatusText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> UndoStatusText;
 };

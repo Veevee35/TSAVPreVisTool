@@ -2,6 +2,22 @@
 
 Unreal Engine tools for A/V production previsualization.
 
+## Standalone TSAV PreVis application
+
+The packaged Unreal project is a runtime previs application, not an editor remote control. Phase 2 adds a runtime scene outliner and inspector, translate/rotate/scale gizmos, command-based undo/redo, object duplication/deletion, and versioned `.tsav` project save/load.
+
+Runtime controls:
+
+- `W`, `E`, `R`: translate, rotate, and scale gizmo modes
+- `X`: toggle local/world gizmo space
+- `Ctrl+Z`, `Ctrl+Y`: undo and redo
+- `Ctrl+D`, `Delete`, `Insert`: duplicate, delete, and add a cube
+- `Ctrl+S`, `Ctrl+O`: save and load the default `.tsav` project
+- Hold right mouse and use `WASD`, `Q`, `E`: fly the design camera
+- Shift-click: additive selection
+
+Create a clean Windows package with `Build/Package-TSAVPreVis.ps1`. It defaults to Shipping, cooks only the application map, and filters editor/Codex authoring plugins out of the cook.
+
 ## LED and NDI builder
 
 The project includes reusable **TSAV LED Panel Definition**, **TSAV LED Panel**, and **TSAV LED Wall Builder** types in the `TSAVLEDTools` plugin. Open **Tools > TSAV LED Wall Builder** for the guided panel, wall, canvas, and NDI workflow. Open `/Game/TSAV/Levels/LED_Canvas_Configurator` for a ready-made level containing a center LED wall, two standalone panels, lighting, a floor, and a preview camera.
