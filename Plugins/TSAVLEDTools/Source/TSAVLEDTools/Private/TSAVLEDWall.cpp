@@ -355,78 +355,142 @@ namespace TSAVLEDWall::Private
 	}
 
 	using FSurfaceFrameSampler = TFunctionRef<void(const FVector2D&, FVector&, FVector&, FVector&, FVector&)>;
+	float GetMaximumPolygonInset(const TArray<FVector2D>& Polygon, float Width, float Height);
+	TArray<FVector2D> MakeInsetPolygon(const TArray<FVector2D>& Polygon, float Width, float Height, float Inset);
 
 	void AppendCurvedCabinetBody(
 		FMeshBuffers& Mesh,
 		const TArray<FVector2D>& Polygon,
 		FSurfaceFrameSampler SampleSurfaceFrame,
 		float FrontClearanceCm,
-		float CabinetDepthCm)
+		float RequestedCabinetDepthCm,
+		float PanelWidthCm,
+		float PanelHeightCm)
 	{
-		const int32 SegmentCount = InternalCurveSegmentsPerHalf * 2;
-		for (int32 Segment = 0; Segment < SegmentCount; ++Segment)
+		if (Polygon.Num() < 3)
 		{
-			const double MinimumX = static_cast<double>(Segment) / SegmentCount;
-			const double MaximumX = static_cast<double>(Segment + 1) / SegmentCount;
-			const TArray<FVector2D> FacePolygon = ClipPolygonToXRange(Polygon, MinimumX, MaximumX);
-			if (FacePolygon.Num() < 3)
-			{
-				continue;
-			}
+			return;
+		}
 
-			TArray<FVector> FrontPoints;
-			TArray<FVector> BackPoints;
-			TArray<FVector> SurfaceNormals;
-			TArray<FVector> SurfaceHorizontals;
-			FrontPoints.Reserve(FacePolygon.Num());
-			BackPoints.Reserve(FacePolygon.Num());
-			SurfaceNormals.Reserve(FacePolygon.Num());
-			SurfaceHorizontals.Reserve(FacePolygon.Num());
-			for (const FVector2D& Point : FacePolygon)
+		// Match the flat cabinet rule: travel inward along the panel surface by
+		// exactly the same amount that the rear surface travels backward. Keeping
+		// those distances equal produces a 45 degree cabinet face while sampling
+		// both outlines from the curved panel preserves the internal arc.
+		const float RequestedInset = FMath::Max(RequestedCabinetDepthCm, 0.1f);
+		const float MaximumInset = GetMaximumPolygonInset(Polygon, PanelWidthCm, PanelHeightCm);
+		const float AppliedInset = FMath::Min(RequestedInset, MaximumInset * 0.9f);
+		const TArray<FVector2D> BackPolygon = MakeInsetPolygon(Polygon, PanelWidthCm, PanelHeightCm, AppliedInset);
+		const int32 SegmentCount = InternalCurveSegmentsPerHalf * 2;
+		auto AppendSurface = [&](const TArray<FVector2D>& SurfacePolygon, float DepthCm, bool bFrontFacing)
+		{
+			for (int32 Segment = 0; Segment < SegmentCount; ++Segment)
 			{
-				FVector Position;
-				FVector Normal;
-				FVector Horizontal;
-				FVector Down;
-				SampleSurfaceFrame(Point, Position, Normal, Horizontal, Down);
-				FrontPoints.Add(Position - Normal * FrontClearanceCm);
-				BackPoints.Add(Position - Normal * (FrontClearanceCm + CabinetDepthCm));
-				SurfaceNormals.Add(Normal);
-				SurfaceHorizontals.Add(Horizontal);
-			}
+				const double MinimumX = static_cast<double>(Segment) / SegmentCount;
+				const double MaximumX = static_cast<double>(Segment + 1) / SegmentCount;
+				const TArray<FVector2D> FacePolygon = ClipPolygonToXRange(SurfacePolygon, MinimumX, MaximumX);
+				if (FacePolygon.Num() < 3)
+				{
+					continue;
+				}
 
-			const int32 FrontBase = Mesh.Vertices.Num();
-			for (int32 Index = 0; Index < FacePolygon.Num(); ++Index)
-			{
-				Mesh.AddVertex(FrontPoints[Index], SurfaceNormals[Index], FacePolygon[Index], -SurfaceHorizontals[Index]);
+				const int32 BaseIndex = Mesh.Vertices.Num();
+				for (const FVector2D& Point : FacePolygon)
+				{
+					FVector Position;
+					FVector Normal;
+					FVector Horizontal;
+					FVector Down;
+					SampleSurfaceFrame(Point, Position, Normal, Horizontal, Down);
+					Mesh.AddVertex(
+						Position - Normal * DepthCm,
+						bFrontFacing ? Normal : -Normal,
+						Point,
+						bFrontFacing ? -Horizontal : Horizontal);
+				}
+				for (int32 Index = 1; Index + 1 < FacePolygon.Num(); ++Index)
+				{
+					if (bFrontFacing)
+					{
+						Mesh.AddTriangle(BaseIndex, BaseIndex + Index, BaseIndex + Index + 1);
+					}
+					else
+					{
+						Mesh.AddTriangle(BaseIndex, BaseIndex + Index + 1, BaseIndex + Index);
+					}
+				}
 			}
-			for (int32 Index = 1; Index + 1 < FacePolygon.Num(); ++Index)
-			{
-				Mesh.AddTriangle(FrontBase, FrontBase + Index, FrontBase + Index + 1);
-			}
+		};
 
-			const int32 BackBase = Mesh.Vertices.Num();
-			for (int32 Index = 0; Index < FacePolygon.Num(); ++Index)
-			{
-				Mesh.AddVertex(BackPoints[Index], -SurfaceNormals[Index], FacePolygon[Index], SurfaceHorizontals[Index]);
-			}
-			for (int32 Index = 1; Index + 1 < FacePolygon.Num(); ++Index)
-			{
-				Mesh.AddTriangle(BackBase, BackBase + Index + 1, BackBase + Index);
-			}
+		AppendSurface(Polygon, FrontClearanceCm, true);
+		AppendSurface(BackPolygon, FrontClearanceCm + AppliedInset, false);
 
-			for (int32 Index = 0; Index < FacePolygon.Num(); ++Index)
+		// Only the real polygon boundary is joined. Curve-segment boundaries are
+		// tessellation seams, so closing each segment independently would create
+		// internal walls and prevent the cabinet from reading as one curved bevel.
+		for (int32 EdgeIndex = 0; EdgeIndex < Polygon.Num(); ++EdgeIndex)
+		{
+			const int32 NextEdgeIndex = (EdgeIndex + 1) % Polygon.Num();
+			const FVector2D FrontEdgeStart = Polygon[EdgeIndex];
+			const FVector2D FrontEdgeEnd = Polygon[NextEdgeIndex];
+			const FVector2D BackEdgeStart = BackPolygon[EdgeIndex];
+			const FVector2D BackEdgeEnd = BackPolygon[NextEdgeIndex];
+			const bool bHorizontalCurvedEdge =
+				FMath::IsNearlyEqual(FrontEdgeStart.Y, FrontEdgeEnd.Y)
+				&& FMath::IsNearlyEqual(BackEdgeStart.Y, BackEdgeEnd.Y);
+			const double BackMinimumX = FMath::Min(BackEdgeStart.X, BackEdgeEnd.X);
+			const double BackMaximumX = FMath::Max(BackEdgeStart.X, BackEdgeEnd.X);
+			const double CurveSpan = FMath::Max(
+				FMath::Abs(FrontEdgeEnd.X - FrontEdgeStart.X),
+				FMath::Abs(BackEdgeEnd.X - BackEdgeStart.X));
+			const int32 EdgeSegmentCount = FMath::Max(1, FMath::CeilToInt(CurveSpan * SegmentCount));
+
+			for (int32 EdgeSegment = 0; EdgeSegment < EdgeSegmentCount; ++EdgeSegment)
 			{
-				const int32 NextIndex = (Index + 1) % FacePolygon.Num();
-				const FVector SideNormal = FVector::CrossProduct(FrontPoints[NextIndex] - FrontPoints[Index], BackPoints[Index] - FrontPoints[Index]).GetSafeNormal();
-				const FVector SideTangent = (FrontPoints[NextIndex] - FrontPoints[Index]).GetSafeNormal();
+				const double AlphaA = static_cast<double>(EdgeSegment) / EdgeSegmentCount;
+				const double AlphaB = static_cast<double>(EdgeSegment + 1) / EdgeSegmentCount;
+				const FVector2D FrontPointA = FMath::Lerp(FrontEdgeStart, FrontEdgeEnd, AlphaA);
+				const FVector2D FrontPointB = FMath::Lerp(FrontEdgeStart, FrontEdgeEnd, AlphaB);
+				FVector2D BackPointA = FMath::Lerp(BackEdgeStart, BackEdgeEnd, AlphaA);
+				FVector2D BackPointB = FMath::Lerp(BackEdgeStart, BackEdgeEnd, AlphaB);
+				if (bHorizontalCurvedEdge)
+				{
+					// The curve runs horizontally. Pair the front and rear outlines at
+					// the same curve coordinate, clamping only the corner wedges to the
+					// inset endpoints. This prevents a shorter rear arc from rotating the
+					// top/bottom chamfer away from 45 degrees on tight curves.
+					BackPointA.X = FMath::Clamp(FrontPointA.X, BackMinimumX, BackMaximumX);
+					BackPointB.X = FMath::Clamp(FrontPointB.X, BackMinimumX, BackMaximumX);
+				}
+
+				auto GetOffsetPosition = [&](const FVector2D& Point, float DepthCm)
+				{
+					FVector Position;
+					FVector Normal;
+					FVector Horizontal;
+					FVector Down;
+					SampleSurfaceFrame(Point, Position, Normal, Horizontal, Down);
+					return Position - Normal * DepthCm;
+				};
+
+				const FVector FrontA = GetOffsetPosition(FrontPointA, FrontClearanceCm);
+				const FVector FrontB = GetOffsetPosition(FrontPointB, FrontClearanceCm);
+				const FVector BackA = GetOffsetPosition(BackPointA, FrontClearanceCm + AppliedInset);
+				const FVector BackB = GetOffsetPosition(BackPointB, FrontClearanceCm + AppliedInset);
+				const FVector SideNormal = FVector::CrossProduct(FrontB - FrontA, BackA - FrontA).GetSafeNormal();
+				const FVector SideTangent = (FrontB - FrontA).GetSafeNormal();
 				const int32 SideBase = Mesh.Vertices.Num();
-				Mesh.AddVertex(FrontPoints[Index], SideNormal, FVector2D(0.0f, 0.0f), SideTangent);
-				Mesh.AddVertex(FrontPoints[NextIndex], SideNormal, FVector2D(1.0f, 0.0f), SideTangent);
-				Mesh.AddVertex(BackPoints[NextIndex], SideNormal, FVector2D(1.0f, 1.0f), SideTangent);
-				Mesh.AddVertex(BackPoints[Index], SideNormal, FVector2D(0.0f, 1.0f), SideTangent);
-				Mesh.AddTriangle(SideBase, SideBase + 2, SideBase + 1);
-				Mesh.AddTriangle(SideBase, SideBase + 3, SideBase + 2);
+				Mesh.AddVertex(FrontA, SideNormal, FVector2D(FrontPointA.X, 0.0f), SideTangent);
+				Mesh.AddVertex(FrontB, SideNormal, FVector2D(FrontPointB.X, 0.0f), SideTangent);
+				Mesh.AddVertex(BackB, SideNormal, FVector2D(BackPointB.X, 1.0f), SideTangent);
+				Mesh.AddVertex(BackA, SideNormal, FVector2D(BackPointA.X, 1.0f), SideTangent);
+				if (!FVector::CrossProduct(BackB - FrontA, FrontB - FrontA).IsNearlyZero())
+				{
+					Mesh.AddTriangle(SideBase, SideBase + 2, SideBase + 1);
+				}
+				if (!FVector::CrossProduct(BackA - FrontA, BackB - FrontA).IsNearlyZero())
+				{
+					Mesh.AddTriangle(SideBase, SideBase + 3, SideBase + 2);
+				}
 			}
 		}
 	}
@@ -1115,7 +1179,7 @@ void ATSAVLEDWall::UpdateGeometry()
 			AppendFrontFace(DisplayMesh, Polygon, TopLeft, TopRight, BottomRight, BottomLeft, Column, Row, Columns, Rows, bInternalCurveEnabled, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal);
 			if (bHasInternalArc)
 			{
-				AppendCurvedCabinetBody(FrameMesh, Polygon, GetSurfaceFrame, 0.2f, EffectiveDepth);
+				AppendCurvedCabinetBody(FrameMesh, Polygon, GetSurfaceFrame, 0.2f, EffectiveDepth, EffectivePanelWidth, EffectivePanelHeight);
 			}
 			else
 			{
