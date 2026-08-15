@@ -5,6 +5,10 @@
 	"Description": "",
 	"Plugins": [
 		{
+			"Name": "TSAVPrevisRuntime",
+			"Enabled": true
+		},
+		{
 			"Name": "TSAVLEDTools",
 			"Enabled": true
 		},

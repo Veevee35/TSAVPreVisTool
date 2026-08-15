@@ -354,6 +354,83 @@ namespace TSAVLEDWall::Private
 		}
 	}
 
+	using FSurfaceFrameSampler = TFunctionRef<void(const FVector2D&, FVector&, FVector&, FVector&, FVector&)>;
+
+	void AppendCurvedCabinetBody(
+		FMeshBuffers& Mesh,
+		const TArray<FVector2D>& Polygon,
+		FSurfaceFrameSampler SampleSurfaceFrame,
+		float FrontClearanceCm,
+		float CabinetDepthCm)
+	{
+		const int32 SegmentCount = InternalCurveSegmentsPerHalf * 2;
+		for (int32 Segment = 0; Segment < SegmentCount; ++Segment)
+		{
+			const double MinimumX = static_cast<double>(Segment) / SegmentCount;
+			const double MaximumX = static_cast<double>(Segment + 1) / SegmentCount;
+			const TArray<FVector2D> FacePolygon = ClipPolygonToXRange(Polygon, MinimumX, MaximumX);
+			if (FacePolygon.Num() < 3)
+			{
+				continue;
+			}
+
+			TArray<FVector> FrontPoints;
+			TArray<FVector> BackPoints;
+			TArray<FVector> SurfaceNormals;
+			TArray<FVector> SurfaceHorizontals;
+			FrontPoints.Reserve(FacePolygon.Num());
+			BackPoints.Reserve(FacePolygon.Num());
+			SurfaceNormals.Reserve(FacePolygon.Num());
+			SurfaceHorizontals.Reserve(FacePolygon.Num());
+			for (const FVector2D& Point : FacePolygon)
+			{
+				FVector Position;
+				FVector Normal;
+				FVector Horizontal;
+				FVector Down;
+				SampleSurfaceFrame(Point, Position, Normal, Horizontal, Down);
+				FrontPoints.Add(Position - Normal * FrontClearanceCm);
+				BackPoints.Add(Position - Normal * (FrontClearanceCm + CabinetDepthCm));
+				SurfaceNormals.Add(Normal);
+				SurfaceHorizontals.Add(Horizontal);
+			}
+
+			const int32 FrontBase = Mesh.Vertices.Num();
+			for (int32 Index = 0; Index < FacePolygon.Num(); ++Index)
+			{
+				Mesh.AddVertex(FrontPoints[Index], SurfaceNormals[Index], FacePolygon[Index], -SurfaceHorizontals[Index]);
+			}
+			for (int32 Index = 1; Index + 1 < FacePolygon.Num(); ++Index)
+			{
+				Mesh.AddTriangle(FrontBase, FrontBase + Index, FrontBase + Index + 1);
+			}
+
+			const int32 BackBase = Mesh.Vertices.Num();
+			for (int32 Index = 0; Index < FacePolygon.Num(); ++Index)
+			{
+				Mesh.AddVertex(BackPoints[Index], -SurfaceNormals[Index], FacePolygon[Index], SurfaceHorizontals[Index]);
+			}
+			for (int32 Index = 1; Index + 1 < FacePolygon.Num(); ++Index)
+			{
+				Mesh.AddTriangle(BackBase, BackBase + Index + 1, BackBase + Index);
+			}
+
+			for (int32 Index = 0; Index < FacePolygon.Num(); ++Index)
+			{
+				const int32 NextIndex = (Index + 1) % FacePolygon.Num();
+				const FVector SideNormal = FVector::CrossProduct(FrontPoints[NextIndex] - FrontPoints[Index], BackPoints[Index] - FrontPoints[Index]).GetSafeNormal();
+				const FVector SideTangent = (FrontPoints[NextIndex] - FrontPoints[Index]).GetSafeNormal();
+				const int32 SideBase = Mesh.Vertices.Num();
+				Mesh.AddVertex(FrontPoints[Index], SideNormal, FVector2D(0.0f, 0.0f), SideTangent);
+				Mesh.AddVertex(FrontPoints[NextIndex], SideNormal, FVector2D(1.0f, 0.0f), SideTangent);
+				Mesh.AddVertex(BackPoints[NextIndex], SideNormal, FVector2D(1.0f, 1.0f), SideTangent);
+				Mesh.AddVertex(BackPoints[Index], SideNormal, FVector2D(0.0f, 1.0f), SideTangent);
+				Mesh.AddTriangle(SideBase, SideBase + 2, SideBase + 1);
+				Mesh.AddTriangle(SideBase, SideBase + 3, SideBase + 2);
+			}
+		}
+	}
+
 	float GetMaximumPolygonInset(const TArray<FVector2D>& Polygon, float Width, float Height)
 	{
 		if (Polygon.Num() < 3)
@@ -621,7 +698,12 @@ bool ATSAVLEDWall::IsPanelEnabled(int32 Column, int32 Row) const
 
 void ATSAVLEDWall::RebuildPanelLayout()
 {
+#if WITH_EDITOR
 	RerunConstructionScripts();
+#else
+	RefreshMedia();
+	UpdateGeometry();
+#endif
 }
 
 void ATSAVLEDWall::OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial)
@@ -1007,6 +1089,21 @@ void ATSAVLEDWall::UpdateGeometry()
 			const float AngleADegrees = ColumnInternalCurveAngleADegrees.IsValidIndex(Column) ? ColumnInternalCurveAngleADegrees[Column] : 0.0f;
 			const float AngleBDegrees = ColumnInternalCurveAngleBDegrees.IsValidIndex(Column) ? ColumnInternalCurveAngleBDegrees[Column] : 0.0f;
 			const FVector CurveStartHorizontal = FRotator(0.0f, ColumnStartYaws[Column], 0.0f).RotateVector(FVector::YAxisVector);
+			const bool bHasInternalArc = bInternalCurveEnabled && (!FMath::IsNearlyZero(AngleADegrees) || !FMath::IsNearlyZero(AngleBDegrees));
+			auto GetSurfaceFrame = [&](const FVector2D& Point, FVector& OutPosition, FVector& OutNormal, FVector& OutHorizontal, FVector& OutDown)
+			{
+				const double SampleDistance = 0.0001;
+				const FVector2D LeftSample(FMath::Max(Point.X - SampleDistance, 0.0), Point.Y);
+				const FVector2D RightSample(FMath::Min(Point.X + SampleDistance, 1.0), Point.Y);
+				const FVector2D TopSample(Point.X, FMath::Max(Point.Y - SampleDistance, 0.0));
+				const FVector2D BottomSample(Point.X, FMath::Min(Point.Y + SampleDistance, 1.0));
+				OutPosition = MapCurvedPanelPoint(Point, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal);
+				OutHorizontal = (MapCurvedPanelPoint(RightSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)
+					- MapCurvedPanelPoint(LeftSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)).GetSafeNormal();
+				OutDown = (MapCurvedPanelPoint(BottomSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)
+					- MapCurvedPanelPoint(TopSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)).GetSafeNormal();
+				OutNormal = FVector::CrossProduct(OutDown, OutHorizontal).GetSafeNormal();
+			};
 			const double MaximumConcaveOffset = bInternalCurveEnabled
 				? FMath::Max3(
 					-GetInternalCurveNormalDeviationCm(0.25, EffectivePanelWidth, AngleADegrees, AngleBDegrees),
@@ -1016,27 +1113,19 @@ void ATSAVLEDWall::UpdateGeometry()
 			const FVector CabinetCenter = FrontCenter - Normal * (DisplayFrontDepth + MaximumConcaveOffset);
 			const TArray<FVector2D> Polygon = MakePanelPolygon(GetPanelEdgeStyle(Column, Row), EffectivePanelWidth, EffectivePanelHeight, RoundEdgeRadiusMeters);
 			AppendFrontFace(DisplayMesh, Polygon, TopLeft, TopRight, BottomRight, BottomLeft, Column, Row, Columns, Rows, bInternalCurveEnabled, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal);
-			AppendChamferedCabinetBody(FrameMesh, Polygon, CabinetCenter, Normal, Horizontal, VerticalUp, CabinetWidth, CabinetHeight, CabinetFrontDepth, BackDepth);
+			if (bHasInternalArc)
+			{
+				AppendCurvedCabinetBody(FrameMesh, Polygon, GetSurfaceFrame, 0.2f, EffectiveDepth);
+			}
+			else
+			{
+				AppendChamferedCabinetBody(FrameMesh, Polygon, CabinetCenter, Normal, Horizontal, VerticalUp, CabinetWidth, CabinetHeight, CabinetFrontDepth, BackDepth);
+			}
 
 			if (ChamferSize > 0.0f)
 			{
-				if (bInternalCurveEnabled && (!FMath::IsNearlyZero(AngleADegrees) || !FMath::IsNearlyZero(AngleBDegrees)))
+				if (bHasInternalArc)
 				{
-					auto GetSurfaceFrame = [&](const FVector2D& Point, FVector& OutPosition, FVector& OutNormal, FVector& OutHorizontal, FVector& OutDown)
-					{
-						const double SampleDistance = 0.0001;
-						const FVector2D LeftSample(FMath::Max(Point.X - SampleDistance, 0.0), Point.Y);
-						const FVector2D RightSample(FMath::Min(Point.X + SampleDistance, 1.0), Point.Y);
-						const FVector2D TopSample(Point.X, FMath::Max(Point.Y - SampleDistance, 0.0));
-						const FVector2D BottomSample(Point.X, FMath::Min(Point.Y + SampleDistance, 1.0));
-						OutPosition = MapCurvedPanelPoint(Point, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal);
-						OutHorizontal = (MapCurvedPanelPoint(RightSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)
-							- MapCurvedPanelPoint(LeftSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)).GetSafeNormal();
-						OutDown = (MapCurvedPanelPoint(BottomSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)
-							- MapCurvedPanelPoint(TopSample, TopLeft, TopRight, BottomRight, BottomLeft, true, AngleADegrees, AngleBDegrees, TopCurveScale, BottomCurveScale, EffectivePanelWidth, CurveStartHorizontal)).GetSafeNormal();
-						OutNormal = FVector::CrossProduct(OutDown, OutHorizontal).GetSafeNormal();
-					};
-
 					if (!IsConnectedNeighbor(Column, Row - 1) || !IsConnectedNeighbor(Column, Row + 1))
 					{
 						const int32 SegmentCount = InternalCurveSegmentsPerHalf * 2;
