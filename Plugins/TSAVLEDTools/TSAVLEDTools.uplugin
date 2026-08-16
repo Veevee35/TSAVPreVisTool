@@ -24,7 +24,15 @@
 	],
 	"Plugins": [
 		{
+			"Name": "Interchange",
+			"Enabled": true
+		},
+		{
 			"Name": "DMXEngine",
+			"Enabled": true
+		},
+		{
+			"Name": "DMXFixtures",
 			"Enabled": true
 		},
 		{

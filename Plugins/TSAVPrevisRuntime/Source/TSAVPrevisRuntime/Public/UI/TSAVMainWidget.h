@@ -23,6 +23,7 @@ class UEditableTextBox;
 class UScrollBox;
 class UTextBlock;
 class UTSAVLEDWallConfiguratorWidget;
+class UTSAVDMXFixtureCatalog;
 class UVerticalBox;
 
 enum class ETSAVTopMenu : uint8
@@ -63,6 +64,8 @@ private:
 	void HideMenu();
 	void AddMenuEntry(const FText& Label, ETSAVMenuAction Action, bool bEnabled = true);
 	void ExecuteMenuAction(ETSAVMenuAction Action);
+	void OpenFixtureBrowser();
+	void RefreshFixtureBrowser(const FString& SearchText);
 	FTransform MakePlacementTransform(const FVector& Scale = FVector::OneVector, float Distance = 500.0f) const;
 	AActor* SpawnAndSelect(TSubclassOf<AActor> ActorClass, const FTransform& Transform, const FText& DisplayName, ETSAVObjectType ObjectType);
 	static FText GetModeText(ETSAVAppMode Mode);
@@ -87,6 +90,15 @@ private:
 
 	UFUNCTION()
 	void HandleMenuActionClicked(ETSAVMenuAction Action);
+
+	UFUNCTION()
+	void HandleFixtureSearchChanged(const FText& Text);
+
+	UFUNCTION()
+	void HandleFixtureOptionClicked(FName DefinitionId);
+
+	UFUNCTION()
+	void CloseFixtureBrowserClicked();
 
 	UFUNCTION()
 	void FileMenuClicked();
@@ -393,6 +405,19 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasPanelSlot> MenuPopupSlot;
+
+	/** Searchable packaged-build browser for the complete generated GDTF catalog. */
+	UPROPERTY(Transient)
+	TObjectPtr<UCanvasPanel> FixtureBrowserLayer;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> FixtureBrowserEntries;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> FixtureBrowserCountText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTSAVDMXFixtureCatalog> FixtureCatalog;
 
 	ETSAVTopMenu OpenMenu = ETSAVTopMenu::None;
 };

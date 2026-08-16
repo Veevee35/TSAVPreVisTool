@@ -13,6 +13,7 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/ScrollBox.h"
+#include "Components/SizeBox.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
@@ -36,11 +37,13 @@
 #include "TSAVMediaSurfaceActor.h"
 #include "TSAVStateSerializable.h"
 #include "TSAVDMXFixture.h"
+#include "TSAVDMXFixtureCatalog.h"
 #include "TSAVLEDPanel.h"
 #include "TSAVLEDWall.h"
 #include "TSAVVideoSwitcher.h"
 #include "Video/TSAVCameraActor.h"
 #include "UI/TSAVMenuButton.h"
+#include "UI/TSAVFixtureOptionButton.h"
 #include "UI/TSAVLEDWallConfiguratorWidget.h"
 #include "UI/TSAVOutlinerButton.h"
 #include "UI/TSAVSwitcherInputButton.h"
@@ -482,6 +485,53 @@ void UTSAVMainWidget::BuildLayout()
 		MutedTextColor);
 	ViewportHint->SetJustification(ETextJustify::Center);
 	AddCanvasPanel(*RootCanvas, *ViewportHint, FAnchors(0.5f, 1.0f), FMargin(0.0f, -58.0f, 560.0f, 22.0f), FVector2D(0.5f, 1.0f), 2);
+
+	FixtureBrowserLayer = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("FixtureBrowserLayer"));
+	AddCanvasPanel(*RootCanvas, *FixtureBrowserLayer, FAnchors(0.0f, 0.0f, 1.0f, 1.0f), FMargin(), FVector2D::ZeroVector, 100);
+
+	UBorder* FixtureBrowserDimmer = WidgetTree->ConstructWidget<UBorder>();
+	FixtureBrowserDimmer->SetBrushColor(FLinearColor(0.0f, 0.0f, 0.0f, 0.78f));
+	AddCanvasPanel(*FixtureBrowserLayer, *FixtureBrowserDimmer, FAnchors(0.0f, 0.0f, 1.0f, 1.0f), FMargin());
+
+	UBorder* FixtureBrowserPanel = WidgetTree->ConstructWidget<UBorder>();
+	FixtureBrowserPanel->SetBrushColor(FLinearColor(0.028f, 0.038f, 0.055f, 1.0f));
+	FixtureBrowserPanel->SetPadding(FMargin(20.0f));
+	AddCanvasPanel(*FixtureBrowserLayer, *FixtureBrowserPanel, FAnchors(0.5f, 0.5f), FMargin(0.0f, 0.0f, 780.0f, 680.0f), FVector2D(0.5f, 0.5f), 1);
+
+	UVerticalBox* FixtureBrowserContent = WidgetTree->ConstructWidget<UVerticalBox>();
+	FixtureBrowserPanel->SetContent(FixtureBrowserContent);
+	FixtureBrowserContent->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "FixtureBrowserTitle", "ADD GDTF DMX FIXTURE"), 18, AccentColor));
+	UTextBlock* FixtureBrowserHelp = CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "FixtureBrowserHelp", "Search all generated fixture profiles. Selecting a row creates its 3D model and assigns its DMX Library patch."), 11, MutedTextColor);
+	FixtureBrowserHelp->SetAutoWrapText(true);
+	if (UVerticalBoxSlot* HelpSlot = FixtureBrowserContent->AddChildToVerticalBox(FixtureBrowserHelp))
+	{
+		HelpSlot->SetPadding(FMargin(0.0f, 5.0f, 0.0f, 12.0f));
+	}
+
+	UEditableTextBox* FixtureSearch = CreateEditField(*WidgetTree, NSLOCTEXT("TSAVPreVis", "FixtureSearchHint", "Search manufacturer, fixture, mode, or revision…"));
+	FixtureSearch->OnTextChanged.AddDynamic(this, &UTSAVMainWidget::HandleFixtureSearchChanged);
+	FixtureBrowserContent->AddChildToVerticalBox(FixtureSearch);
+	FixtureBrowserCountText = CreateText(*WidgetTree, FText::GetEmpty(), 10, MutedTextColor);
+	if (UVerticalBoxSlot* CountSlot = FixtureBrowserContent->AddChildToVerticalBox(FixtureBrowserCountText))
+	{
+		CountSlot->SetPadding(FMargin(0.0f, 7.0f, 0.0f, 7.0f));
+	}
+
+	UScrollBox* FixtureBrowserScroll = WidgetTree->ConstructWidget<UScrollBox>();
+	FixtureBrowserEntries = WidgetTree->ConstructWidget<UVerticalBox>();
+	FixtureBrowserScroll->AddChild(FixtureBrowserEntries);
+	if (UVerticalBoxSlot* ScrollSlot = FixtureBrowserContent->AddChildToVerticalBox(FixtureBrowserScroll))
+	{
+		ScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	}
+
+	UButton* CloseFixtureBrowser = CreateModeButton(*WidgetTree, NSLOCTEXT("TSAVPreVis", "FixtureBrowserClose", "CLOSE"));
+	CloseFixtureBrowser->OnClicked.AddDynamic(this, &UTSAVMainWidget::CloseFixtureBrowserClicked);
+	if (UVerticalBoxSlot* CloseSlot = FixtureBrowserContent->AddChildToVerticalBox(CloseFixtureBrowser))
+	{
+		CloseSlot->SetPadding(FMargin(0.0f, 12.0f, 0.0f, 0.0f));
+	}
+	FixtureBrowserLayer->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void UTSAVMainWidget::ToggleMenu(const ETSAVTopMenu Menu, const float LeftPosition)
@@ -581,6 +631,128 @@ void UTSAVMainWidget::AddMenuEntry(const FText& Label, const ETSAVMenuAction Act
 	{
 		MenuEntrySlot->SetPadding(FMargin(0.0f, 1.0f));
 		MenuEntrySlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+}
+
+void UTSAVMainWidget::OpenFixtureBrowser()
+{
+	HideMenu();
+	FixtureCatalog = Cast<UTSAVDMXFixtureCatalog>(UTSAVDMXFixtureCatalog::DefaultCatalogPath.TryLoad());
+	if (!FixtureBrowserLayer || !FixtureBrowserEntries)
+	{
+		return;
+	}
+
+	FixtureBrowserLayer->SetVisibility(ESlateVisibility::Visible);
+	RefreshFixtureBrowser(FString());
+}
+
+void UTSAVMainWidget::RefreshFixtureBrowser(const FString& SearchText)
+{
+	using namespace TSAVMainWidget::Private;
+	if (!FixtureBrowserEntries || !FixtureBrowserCountText)
+	{
+		return;
+	}
+
+	FixtureBrowserEntries->ClearChildren();
+	if (!FixtureCatalog)
+	{
+		FixtureBrowserCountText->SetText(NSLOCTEXT("TSAVPreVis", "FixtureCatalogMissing", "Fixture catalog is not available. In Unreal, run Tools > Build Complete GDTF Fixture Library, then package again."));
+		return;
+	}
+
+	const FString Query = SearchText.TrimStartAndEnd().ToLower();
+	int32 VisibleCount = 0;
+	for (const FTSAVDMXFixtureDefinition& Definition : FixtureCatalog->Fixtures)
+	{
+		const FString Searchable = FString::Printf(
+			TEXT("%s %s %s %s %s"),
+			*Definition.Manufacturer.ToString(),
+			*Definition.DisplayName.ToString(),
+			*Definition.GDTFModeName,
+			*Definition.Revision,
+			*Definition.DefinitionId.ToString()).ToLower();
+		if (!Query.IsEmpty() && !Searchable.Contains(Query))
+		{
+			continue;
+		}
+
+		const FString Manufacturer = Definition.Manufacturer.IsEmpty() ? TEXT("Unknown manufacturer") : Definition.Manufacturer.ToString();
+		const FText RowLabel = FText::FromString(FString::Printf(
+			TEXT("%s  —  %s\n%s  •  %d ch  •  U%d.%03d"),
+			*Manufacturer,
+			*Definition.DisplayName.ToString(),
+			Definition.GDTFModeName.IsEmpty() ? TEXT("Default mode") : *Definition.GDTFModeName,
+			Definition.ChannelSpan,
+			Definition.Universe,
+			Definition.Address));
+
+		UTSAVFixtureOptionButton* Button = WidgetTree->ConstructWidget<UTSAVFixtureOptionButton>();
+		Button->InitializeForDefinition(Definition.DefinitionId);
+		Button->OnFixtureOptionClicked.AddDynamic(this, &UTSAVMainWidget::HandleFixtureOptionClicked);
+		Button->SetBackgroundColor(FLinearColor(0.055f, 0.07f, 0.095f, 1.0f));
+		UTextBlock* RowText = CreateText(*WidgetTree, RowLabel, 11, PrimaryTextColor);
+		RowText->SetAutoWrapText(true);
+		Button->SetContent(RowText);
+		if (UVerticalBoxSlot* RowSlot = FixtureBrowserEntries->AddChildToVerticalBox(Button))
+		{
+			RowSlot->SetPadding(FMargin(0.0f, 2.0f));
+		}
+		++VisibleCount;
+	}
+
+	FixtureBrowserCountText->SetText(FText::Format(
+		NSLOCTEXT("TSAVPreVis", "FixtureCatalogCount", "Showing {0} of {1} fixture options"),
+		FText::AsNumber(VisibleCount),
+		FText::AsNumber(FixtureCatalog->Fixtures.Num())));
+}
+
+void UTSAVMainWidget::HandleFixtureSearchChanged(const FText& Text)
+{
+	RefreshFixtureBrowser(Text.ToString());
+}
+
+void UTSAVMainWidget::HandleFixtureOptionClicked(const FName DefinitionId)
+{
+	if (!FixtureCatalog)
+	{
+		return;
+	}
+	const FTSAVDMXFixtureDefinition* Definition = FixtureCatalog->FindFixture(DefinitionId);
+	if (!Definition)
+	{
+		return;
+	}
+
+	ATSAVDMXFixture* Fixture = Cast<ATSAVDMXFixture>(SpawnAndSelect(
+		ATSAVDMXFixture::StaticClass(),
+		MakePlacementTransform(FVector::OneVector, 350.0f),
+		Definition->DisplayName,
+		ETSAVObjectType::Fixture));
+	if (!Fixture)
+	{
+		return;
+	}
+
+	if (!Fixture->ApplyFixtureDefinition(*Definition, true))
+	{
+		Fixture->Destroy();
+		RefreshOutliner();
+		return;
+	}
+#if WITH_EDITOR
+	Fixture->SetActorLabel(Definition->DisplayName.ToString());
+#endif
+	FixtureBrowserLayer->SetVisibility(ESlateVisibility::Collapsed);
+	RefreshOutliner();
+}
+
+void UTSAVMainWidget::CloseFixtureBrowserClicked()
+{
+	if (FixtureBrowserLayer)
+	{
+		FixtureBrowserLayer->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 
@@ -685,8 +857,7 @@ void UTSAVMainWidget::ExecuteMenuAction(const ETSAVMenuAction Action)
 		break;
 	case ETSAVMenuAction::AddDMXFixture:
 		SetAppMode(ETSAVAppMode::Lighting);
-		SpawnAndSelect(ATSAVDMXFixture::StaticClass(), MakePlacementTransform(FVector::OneVector, 350.0f),
-			NSLOCTEXT("TSAVPreVis", "NewDMXFixture", "DMX Fixture"), ETSAVObjectType::Fixture);
+		OpenFixtureBrowser();
 		break;
 	case ETSAVMenuAction::AddPointLight:
 		SetAppMode(ETSAVAppMode::Lighting);

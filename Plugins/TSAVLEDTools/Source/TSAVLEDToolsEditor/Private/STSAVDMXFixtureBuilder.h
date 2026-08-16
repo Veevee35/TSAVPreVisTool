@@ -23,6 +23,12 @@ public:
 
 	void Construct(const FArguments& InArgs);
 
+	/** Builds one generated catalog and DMX library from every GDTF under /Game/DMX/GDTF_Fixtures. */
+	static bool BuildCompleteFixtureLibrary(FString& OutSummary);
+
+	/** Validates the generated catalog, model assignments, DMX entities, and normalized fixture behavior. */
+	static bool ValidateCompleteFixtureLibrary(FString& OutSummary);
+
 private:
 	FReply ImportGDTF();
 	FReply ImportModel();
@@ -37,6 +43,7 @@ private:
 	void OnHeadMeshChanged(const FAssetData& AssetData);
 	void OnLensMeshChanged(const FAssetData& AssetData);
 	int32 ImportEmbeddedGDTFModels(FText& OutResultMessage);
+	int32 AssignPrimitiveFallbackModels();
 	void RefreshGDTFModes(bool bAdoptPhysicalMotion);
 	void AdoptSelectedModePhysicalProperties();
 	void OnModeSelected(TSharedPtr<FString> NewMode, ESelectInfo::Type SelectInfo);

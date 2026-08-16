@@ -8,6 +8,7 @@
 #include "Game/DMXComponent.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXImportGDTF.h"
+#include "Library/DMXLibrary.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVDMXFixture)
 
@@ -58,7 +59,9 @@ ATSAVDMXFixture::ATSAVDMXFixture()
 	YokeVisual->SetMobility(EComponentMobility::Movable);
 	HeadVisual->SetMobility(EComponentMobility::Movable);
 	LensVisual->SetMobility(EComponentMobility::Movable);
-	BaseVisual->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	// Fixtures need editor/runtime hit testing, but never simulate physics. Query
+	// collision avoids Chaos mass generation for intentionally flat GDTF parts.
+	BaseVisual->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	YokeVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	HeadVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	LensVisual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -118,6 +121,76 @@ void ATSAVDMXFixture::SetFixturePatch(UDMXEntityFixturePatch* FixturePatch)
 		DMXComponent->SetFixturePatch(FixturePatch);
 		DMXComponent->SetReceiveDMXFromPatch(true);
 	}
+}
+
+bool ATSAVDMXFixture::ApplyFixtureDefinition(const FTSAVDMXFixtureDefinition& Definition, const bool bApplyDefaultPatch)
+{
+	FixtureDefinitionId = Definition.DefinitionId;
+	GDTFSource = Definition.GDTFSource.LoadSynchronous();
+	GDTFModeName = Definition.GDTFModeName;
+	BaseMesh = Definition.BaseMesh.LoadSynchronous();
+	YokeMesh = Definition.YokeMesh.LoadSynchronous();
+	HeadMesh = Definition.HeadMesh.LoadSynchronous();
+	LensMesh = Definition.LensMesh.LoadSynchronous();
+	FixtureScale = FMath::Max(Definition.FixtureScale, 0.001f);
+	ModelRotation = Definition.ModelRotation;
+	auto SafeModelScale = [](const FVector& Scale)
+	{
+		return FVector(
+			FMath::Clamp(FMath::Abs(Scale.X), 0.001, 1000.0),
+			FMath::Clamp(FMath::Abs(Scale.Y), 0.001, 1000.0),
+			FMath::Clamp(FMath::Abs(Scale.Z), 0.001, 1000.0));
+	};
+	BaseMeshScale = SafeModelScale(Definition.BaseMeshScale);
+	YokeMeshScale = SafeModelScale(Definition.YokeMeshScale);
+	HeadMeshScale = SafeModelScale(Definition.HeadMeshScale);
+	LensMeshScale = SafeModelScale(Definition.LensMeshScale);
+	BaseMeshOffset = Definition.BaseMeshOffset;
+	YokeMeshOffset = Definition.YokeMeshOffset;
+	HeadMeshOffset = Definition.HeadMeshOffset;
+	PanPivotOffset = Definition.PanPivotOffset;
+	TiltPivotOffset = Definition.TiltPivotOffset;
+	PanPivotRotation = Definition.PanPivotRotation;
+	TiltPivotRotation = Definition.TiltPivotRotation;
+	PanMinDegrees = Definition.PanMinDegrees;
+	PanMaxDegrees = Definition.PanMaxDegrees;
+	TiltMinDegrees = Definition.TiltMinDegrees;
+	TiltMaxDegrees = Definition.TiltMaxDegrees;
+	PanSpeedDegreesPerSecond = FMath::Max(Definition.PanSpeedDegreesPerSecond, 0.0f);
+	TiltSpeedDegreesPerSecond = FMath::Max(Definition.TiltSpeedDegreesPerSecond, 0.0f);
+	LensOffset = Definition.LensOffset;
+	LensMeshRotation = Definition.LensMeshRotation;
+	BeamRotation = Definition.BeamRotation;
+	MaximumIntensityLumens = FMath::Max(Definition.MaximumIntensityLumens, 0.0f);
+	MinimumBeamAngleDegrees = Definition.MinimumBeamAngleDegrees;
+	MaximumBeamAngleDegrees = Definition.MaximumBeamAngleDegrees;
+	AttenuationRadiusCm = FMath::Max(Definition.AttenuationRadiusCm, 1.0f);
+
+	if (bApplyDefaultPatch)
+	{
+		UDMXEntityFixturePatch* DefaultPatch = nullptr;
+		if (UDMXLibrary* Library = Definition.DMXLibrary.LoadSynchronous())
+		{
+			DefaultPatch = Cast<UDMXEntityFixturePatch>(Library->FindEntity(Definition.FixturePatchId));
+		}
+		SetFixturePatch(DefaultPatch);
+	}
+
+	ApplyModelSetup();
+	ApplyPreviewValues();
+	return GDTFSource != nullptr && (BaseMesh != nullptr || YokeMesh != nullptr || HeadMesh != nullptr || LensMesh != nullptr);
+}
+
+void ATSAVDMXFixture::ApplyNormalizedDMX(
+	const float Pan,
+	const float Tilt,
+	const float Dimmer,
+	const FLinearColor Color,
+	const float Zoom,
+	const bool bSnap)
+{
+	SetTargetsFromNormalized(Pan, Tilt, Dimmer, Color, Zoom);
+	ApplyMotionAndBeam(0.0f, bSnap);
 }
 
 UDMXEntityFixturePatch* ATSAVDMXFixture::GetFixturePatch() const

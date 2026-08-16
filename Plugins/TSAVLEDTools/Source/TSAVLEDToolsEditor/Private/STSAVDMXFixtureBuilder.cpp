@@ -5,11 +5,13 @@
 #include "Algo/MaxElement.h"
 #include "Algo/MinElement.h"
 #include "AssetImportTask.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "DesktopPlatformModule.h"
 #include "DMXGDTF.h"
 #include "DMXZipper.h"
+#include "Components/SpotLightComponent.h"
 #include "Editor.h"
 #include "Editor/EditorEngine.h"
 #include "Engine/Selection.h"
@@ -30,6 +32,12 @@
 #include "GDTF/DMXModes/DMXGDTFDMXMode.h"
 #include "GDTF/DMXModes/DMXGDTFLogicalChannel.h"
 #include "IDesktopPlatform.h"
+#include "InterchangeGenericAnimationPipeline.h"
+#include "InterchangeGenericAssetsPipeline.h"
+#include "InterchangeGenericAssetsPipelineSharedSettings.h"
+#include "InterchangeGenericMeshPipeline.h"
+#include "InterchangeManager.h"
+#include "InterchangeProjectSettings.h"
 #include "LevelEditorViewport.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
@@ -41,9 +49,11 @@
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
 #include "PropertyCustomizationHelpers.h"
+#include "PreviewScene.h"
 #include "ScopedTransaction.h"
 #include "Styling/AppStyle.h"
 #include "TSAVDMXFixture.h"
+#include "TSAVDMXFixtureCatalog.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SComboBox.h"
@@ -57,6 +67,8 @@
 #include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "TSAVDMXFixtureBuilder"
+
+DEFINE_LOG_CATEGORY_STATIC(LogTSAVGDTFBatch, Log, All);
 
 namespace TSAVDMXFixtureBuilder::Private
 {
@@ -186,7 +198,158 @@ namespace TSAVDMXFixtureBuilder::Private
 		{
 			return 1;
 		}
+		if (Extension == TEXT("3ds"))
+		{
+			return 2;
+		}
 		return MAX_int32;
+	}
+
+	struct FLegacy3DSObject
+	{
+		FString Name;
+		TArray<FVector3f> Vertices;
+		TArray<FIntVector> Faces;
+	};
+
+	/** Converts the mesh subset of a legacy 3DS file into an OBJ that Interchange can import as a static mesh. */
+	bool ConvertLegacy3DSToOBJ(const TArray64<uint8>& Data, const FString& OutputPath)
+	{
+		if (Data.Num() < 6)
+		{
+			return false;
+		}
+
+		auto ReadUInt16 = [&Data](const int64 Offset, uint16& OutValue)
+		{
+			if (Offset < 0 || Offset + static_cast<int64>(sizeof(uint16)) > Data.Num()) return false;
+			FMemory::Memcpy(&OutValue, Data.GetData() + Offset, sizeof(uint16));
+			return true;
+		};
+		auto ReadUInt32 = [&Data](const int64 Offset, uint32& OutValue)
+		{
+			if (Offset < 0 || Offset + static_cast<int64>(sizeof(uint32)) > Data.Num()) return false;
+			FMemory::Memcpy(&OutValue, Data.GetData() + Offset, sizeof(uint32));
+			return true;
+		};
+		auto ReadFloat = [&Data](const int64 Offset, float& OutValue)
+		{
+			if (Offset < 0 || Offset + static_cast<int64>(sizeof(float)) > Data.Num()) return false;
+			FMemory::Memcpy(&OutValue, Data.GetData() + Offset, sizeof(float));
+			return FMath::IsFinite(OutValue);
+		};
+
+		TArray<FLegacy3DSObject> Objects;
+		TFunction<void(int64, int64, FLegacy3DSObject*, int32)> ParseChunks;
+		ParseChunks = [&](int64 Cursor, const int64 End, FLegacy3DSObject* CurrentObject, const int32 Depth)
+		{
+			if (Depth > 32) return;
+			while (Cursor + 6 <= End && Cursor + 6 <= Data.Num())
+			{
+				uint16 ChunkId = 0;
+				uint32 ChunkLength = 0;
+				if (!ReadUInt16(Cursor, ChunkId) || !ReadUInt32(Cursor + 2, ChunkLength) || ChunkLength < 6)
+				{
+					return;
+				}
+				const int64 ChunkEnd = FMath::Min3(Cursor + static_cast<int64>(ChunkLength), End, Data.Num());
+				if (ChunkEnd <= Cursor + 6)
+				{
+					return;
+				}
+				const int64 Payload = Cursor + 6;
+
+				switch (ChunkId)
+				{
+				case 0x4D4D: // Main file
+				case 0x3D3D: // 3D editor
+				case 0x4100: // Triangular mesh
+					ParseChunks(Payload, ChunkEnd, CurrentObject, Depth + 1);
+					break;
+				case 0x4000: // Named object
+				{
+					int64 NameEnd = Payload;
+					FString ObjectName;
+					while (NameEnd < ChunkEnd && Data[NameEnd] != 0)
+					{
+						const uint8 Character = Data[NameEnd++];
+						ObjectName.AppendChar(Character >= 32 && Character < 127 ? static_cast<TCHAR>(Character) : TEXT('_'));
+					}
+					if (NameEnd < ChunkEnd) ++NameEnd;
+					FLegacy3DSObject& Object = Objects.AddDefaulted_GetRef();
+					Object.Name = ObjectName.IsEmpty() ? FString::Printf(TEXT("Object_%d"), Objects.Num()) : ObjectName;
+					ParseChunks(NameEnd, ChunkEnd, &Object, Depth + 1);
+					break;
+				}
+				case 0x4110: // Vertex list
+					if (CurrentObject)
+					{
+						uint16 VertexCount = 0;
+						if (ReadUInt16(Payload, VertexCount) && Payload + 2 + static_cast<int64>(VertexCount) * 12 <= ChunkEnd)
+						{
+							CurrentObject->Vertices.Reset(VertexCount);
+							for (uint16 VertexIndex = 0; VertexIndex < VertexCount; ++VertexIndex)
+							{
+								const int64 VertexOffset = Payload + 2 + static_cast<int64>(VertexIndex) * 12;
+								float X = 0.0f, Y = 0.0f, Z = 0.0f;
+								if (!ReadFloat(VertexOffset, X) || !ReadFloat(VertexOffset + 4, Y) || !ReadFloat(VertexOffset + 8, Z)) break;
+								CurrentObject->Vertices.Emplace(X, Y, Z);
+							}
+						}
+					}
+					break;
+				case 0x4120: // Face list
+					if (CurrentObject)
+					{
+						uint16 FaceCount = 0;
+						if (ReadUInt16(Payload, FaceCount) && Payload + 2 + static_cast<int64>(FaceCount) * 8 <= ChunkEnd)
+						{
+							CurrentObject->Faces.Reset(FaceCount);
+							for (uint16 FaceIndex = 0; FaceIndex < FaceCount; ++FaceIndex)
+							{
+								const int64 FaceOffset = Payload + 2 + static_cast<int64>(FaceIndex) * 8;
+								uint16 A = 0, B = 0, C = 0;
+								if (!ReadUInt16(FaceOffset, A) || !ReadUInt16(FaceOffset + 2, B) || !ReadUInt16(FaceOffset + 4, C)) break;
+								CurrentObject->Faces.Emplace(A, B, C);
+							}
+						}
+					}
+					break;
+				default:
+					break;
+				}
+				Cursor += ChunkLength;
+			}
+		};
+
+		ParseChunks(0, Data.Num(), nullptr, 0);
+		FString OBJ;
+		// Unreal 5.8's OBJ translator expects a valid UV index whenever it builds
+		// vertex instances. Legacy 3DS fixture geometry often has no texture
+		// coordinates, so give every face a harmless shared UV instead of leaving
+		// the translator with an invalid index.
+		OBJ += TEXT("vt 0 0\n");
+		int32 GlobalVertexOffset = 0;
+		int32 ValidObjectCount = 0;
+		for (const FLegacy3DSObject& Object : Objects)
+		{
+			if (Object.Vertices.IsEmpty() || Object.Faces.IsEmpty()) continue;
+			OBJ += FString::Printf(TEXT("o %s\n"), *ObjectTools::SanitizeObjectName(Object.Name));
+			for (const FVector3f& Vertex : Object.Vertices)
+			{
+				OBJ += FString::Printf(TEXT("v %.9g %.9g %.9g\n"), Vertex.X, Vertex.Y, Vertex.Z);
+			}
+			for (const FIntVector& Face : Object.Faces)
+			{
+				if (Face.X < 0 || Face.Y < 0 || Face.Z < 0 || Face.X >= Object.Vertices.Num() || Face.Y >= Object.Vertices.Num() || Face.Z >= Object.Vertices.Num()) continue;
+				// 3DS faces are clockwise; reverse the last two indices for OBJ's winding.
+				OBJ += FString::Printf(TEXT("f %d/1 %d/1 %d/1\n"), GlobalVertexOffset + Face.X + 1, GlobalVertexOffset + Face.Z + 1, GlobalVertexOffset + Face.Y + 1);
+			}
+			GlobalVertexOffset += Object.Vertices.Num();
+			++ValidObjectCount;
+		}
+
+		return ValidObjectCount > 0 && FFileHelper::SaveStringToFile(OBJ, *OutputPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 	}
 
 	FTransform ConvertParsedGDTFTransformForImportedGLTF(const FTransform& ParsedTransform)
@@ -215,10 +378,16 @@ namespace TSAVDMXFixtureBuilder::Private
 			return FVector::OneVector;
 		}
 
-		return FVector(
+		const FVector Scale(
 			DeclaredSize.X * MetersToCentimeters / ImportedSize.X,
 			DeclaredSize.Y * MetersToCentimeters / ImportedSize.Y,
 			DeclaredSize.Z * MetersToCentimeters / ImportedSize.Z);
+		// Avoid a zero-volume primitive in Chaos when a producer declares a
+		// microscopically thin decorative model dimension.
+		return FVector(
+			FMath::Clamp(Scale.X, 0.001, 1000.0),
+			FMath::Clamp(Scale.Y, 0.001, 1000.0),
+			FMath::Clamp(Scale.Z, 0.001, 1000.0));
 	}
 
 	TSharedPtr<UE::DMX::GDTF::FDMXGDTFBeamGeometry> FindFirstBeamGeometry(const TSharedPtr<UE::DMX::GDTF::FDMXGDTFGeometry>& Geometry)
@@ -680,9 +849,9 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 	LensMeshScale = FVector::OneVector;
 
 	const FString GltfPrefix = TEXT("models/gltf/");
+	const FString Legacy3DSPrefix = TEXT("models/3ds/");
 	TMap<FString, FString> BestArchiveByRelativeStem;
-	TArray<FString> GltfResources;
-	bool bHasLegacy3DSModel = false;
+	TArray<FString> ModelResources;
 	for (const FString& File : Zip->GetFiles())
 	{
 		const FString ArchivePath = NormalizeArchivePath(File);
@@ -691,24 +860,25 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 			continue;
 		}
 
-		if (ArchivePath.StartsWith(TEXT("models/3ds/"), ESearchCase::IgnoreCase) && FPaths::GetExtension(ArchivePath).Equals(TEXT("3ds"), ESearchCase::IgnoreCase))
-		{
-			bHasLegacy3DSModel = true;
-		}
-
-		if (!ArchivePath.StartsWith(GltfPrefix, ESearchCase::IgnoreCase))
+		const bool bIsLegacy3DS = ArchivePath.StartsWith(Legacy3DSPrefix, ESearchCase::IgnoreCase) &&
+			FPaths::GetExtension(ArchivePath).Equals(TEXT("3ds"), ESearchCase::IgnoreCase);
+		const bool bIsGltf = ArchivePath.StartsWith(GltfPrefix, ESearchCase::IgnoreCase) &&
+			(FPaths::GetExtension(ArchivePath).Equals(TEXT("glb"), ESearchCase::IgnoreCase) ||
+			 FPaths::GetExtension(ArchivePath).Equals(TEXT("gltf"), ESearchCase::IgnoreCase));
+		if (!bIsGltf && !bIsLegacy3DS)
 		{
 			continue;
 		}
 
-		GltfResources.Add(ArchivePath);
+		ModelResources.Add(ArchivePath);
 		const int32 Priority = GetEmbeddedModelPriority(ArchivePath);
 		if (Priority == MAX_int32)
 		{
 			continue;
 		}
 
-		FString RelativeStem = FPaths::ChangeExtension(ArchivePath.Mid(GltfPrefix.Len()), TEXT(""));
+		const int32 PrefixLength = bIsGltf ? GltfPrefix.Len() : Legacy3DSPrefix.Len();
+		FString RelativeStem = FPaths::ChangeExtension(ArchivePath.Mid(PrefixLength), TEXT(""));
 		RelativeStem.RemoveFromEnd(TEXT("."));
 		RelativeStem.ToLowerInline();
 		if (const FString* ExistingPath = BestArchiveByRelativeStem.Find(RelativeStem))
@@ -726,9 +896,7 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 
 	if (BestArchiveByRelativeStem.IsEmpty())
 	{
-		OutResultMessage = bHasLegacy3DSModel
-			? LOCTEXT("LegacyEmbeddedModel", "This GDTF only contains a legacy 3DS model, which Unreal cannot import directly. Convert it to glTF/GLB or use manual model import.")
-			: LOCTEXT("NoEmbeddedModel", "No embedded glTF/GLB model was found; a model can still be assigned manually.");
+		OutResultMessage = LOCTEXT("NoEmbeddedModel", "No supported embedded glTF, GLB, or legacy 3DS model was found; a model can still be assigned manually.");
 		return 0;
 	}
 
@@ -809,7 +977,7 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 	IFileManager::Get().MakeDirectory(*ExtractionRoot, true);
 
 	TMap<FString, FString> ExtractedPathByArchiveKey;
-	for (const FString& ArchivePath : GltfResources)
+	for (const FString& ArchivePath : ModelResources)
 	{
 		TArray64<uint8> FileData;
 		if (!Zip->GetFileContent(ArchivePath, FileData))
@@ -817,13 +985,20 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 			continue;
 		}
 
-		const FString ExtractedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ExtractionRoot, ArchivePath));
+		const bool bLegacy3DS = FPaths::GetExtension(ArchivePath).Equals(TEXT("3ds"), ESearchCase::IgnoreCase);
+		const FString RelativeOutputPath = bLegacy3DS
+			? FPaths::ChangeExtension(FString(TEXT("models/converted3ds/")) + ArchivePath.Mid(Legacy3DSPrefix.Len()), TEXT("obj"))
+			: ArchivePath;
+		const FString ExtractedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ExtractionRoot, RelativeOutputPath));
 		if (!ExtractedPath.StartsWith(ExtractionRoot, ESearchCase::IgnoreCase))
 		{
 			continue;
 		}
 		IFileManager::Get().MakeDirectory(*FPaths::GetPath(ExtractedPath), true);
-		if (FFileHelper::SaveArrayToFile(FileData, *ExtractedPath))
+		const bool bSavedModel = bLegacy3DS
+			? ConvertLegacy3DSToOBJ(FileData, ExtractedPath)
+			: FFileHelper::SaveArrayToFile(FileData, *ExtractedPath);
+		if (bSavedModel)
 		{
 			ExtractedPathByArchiveKey.Add(ArchivePath.ToLower(), ExtractedPath);
 		}
@@ -831,7 +1006,10 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 
 	TArray<UAssetImportTask*> ImportTasks;
 	TMap<UAssetImportTask*, FString> ArchiveKeyByTask;
-	const FString DestinationPath = TEXT("/Game/TSAV/Fixtures/Models/") + ObjectTools::SanitizeObjectName(GDTFSource->GetName());
+	TArray<UInterchangePipelineBase*> RootedImportPipelines;
+	// Keep corrected static-only imports isolated from legacy skeletal import assets.
+	// This is important for profiles whose old AnimSequence package cannot be loaded.
+	const FString DestinationPath = TEXT("/Game/TSAV/Fixtures/Models/") + ObjectTools::SanitizeObjectName(GDTFSource->GetName()) + TEXT("/TSAVStaticGeometry");
 	for (const TPair<FString, FString>& Pair : ArchivePathByKey)
 	{
 		const FString* ExtractedPath = ExtractedPathByArchiveKey.Find(Pair.Key);
@@ -847,17 +1025,111 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 		Task->bSave = true;
 		Task->bAsync = false;
 		Task->bReplaceExisting = true;
+		Task->bReplaceExistingSettings = true;
+
+		// Fixture geometry is assembled by the fixture actor's base/yoke/head hierarchy.
+		// Some otherwise valid GDTF GLBs also contain animated transforms or skin data;
+		// force those meshes to remain static and discard their authored animation. This
+		// avoids importing unusable skeletal assets and an Unreal 5.8 AnimSequence crash.
+		const UInterchangeSourceData* SourceData = UInterchangeManager::CreateSourceData(*ExtractedPath);
+		const FName PipelineStackName = FInterchangeProjectSettingsUtils::GetDefaultPipelineStackName(false, *SourceData);
+		const FInterchangeImportSettings& ImportSettings = FInterchangeProjectSettingsUtils::GetDefaultImportSettings(false);
+		const FInterchangePipelineStack* DefaultStack = ImportSettings.PipelineStacks.Find(PipelineStackName);
+		bool bConfiguredStaticPipeline = false;
+		if (DefaultStack)
+		{
+			const TArray<FSoftObjectPath>* PipelinePaths = &DefaultStack->Pipelines;
+			UE::Interchange::FScopedTranslator ScopedTranslator(SourceData);
+			for (const FInterchangeTranslatorPipelines& TranslatorPipelines : DefaultStack->PerTranslatorPipelines)
+			{
+				const UClass* TranslatorClass = TranslatorPipelines.Translator.LoadSynchronous();
+				if (ScopedTranslator.GetTranslator() && ScopedTranslator.GetTranslator()->IsA(TranslatorClass))
+				{
+					PipelinePaths = &TranslatorPipelines.Pipelines;
+					break;
+				}
+			}
+
+			UInterchangePipelineStackOverride* PipelineOverride = NewObject<UInterchangePipelineStackOverride>(Task);
+			for (const FSoftObjectPath& PipelinePath : *PipelinePaths)
+			{
+				UInterchangePipelineBase* DefaultPipeline = Cast<UInterchangePipelineBase>(PipelinePath.TryLoad());
+				UInterchangePipelineBase* GeneratedPipeline = DefaultPipeline ? UE::Interchange::GeneratePipelineInstance(PipelinePath) : nullptr;
+				if (!GeneratedPipeline)
+				{
+					continue;
+				}
+				GeneratedPipeline->TransferAdjustSettings(DefaultPipeline);
+				GeneratedPipeline->AddToRoot();
+				RootedImportPipelines.Add(GeneratedPipeline);
+
+				if (UInterchangeGenericAssetsPipeline* AssetsPipeline = Cast<UInterchangeGenericAssetsPipeline>(GeneratedPipeline))
+				{
+					AssetsPipeline->bAssetTypeSubFolders = true;
+					if (AssetsPipeline->CommonMeshesProperties)
+					{
+						AssetsPipeline->CommonMeshesProperties->ForceAllMeshAsType = EInterchangeForceMeshType::IFMT_StaticMesh;
+						AssetsPipeline->CommonMeshesProperties->bConvertStaticsWithAnimatedTransformToSkeletals = false;
+						AssetsPipeline->CommonMeshesProperties->bConvertStaticsInBoneHierarchyToSkeletals = false;
+					}
+					if (AssetsPipeline->MeshPipeline)
+					{
+						AssetsPipeline->MeshPipeline->bImportStaticMeshes = true;
+						AssetsPipeline->MeshPipeline->bImportSkeletalMeshes = false;
+						// The catalog can contain more than a thousand small authored parts.
+						// Per-part Nanite, Lumen-card, collision, and distance-field builds add
+						// no useful detail here, and Unreal's asynchronous Embree distance-field
+						// builder can crash while a large batch replaces meshes. Keep these
+						// lightweight visual meshes on the conventional static-mesh path.
+						AssetsPipeline->MeshPipeline->bBuildNanite = false;
+						AssetsPipeline->MeshPipeline->DistanceFieldResolutionScale = 0.0f;
+						AssetsPipeline->MeshPipeline->MaxLumenMeshCards = 0;
+						AssetsPipeline->MeshPipeline->bCollision = false;
+						// A GDTF Model.File is one physical fixture part even when the
+						// source file contains hundreds of CAD sub-objects.
+						AssetsPipeline->MeshPipeline->CombineStaticMeshesBehavior = EInterchangeCombineStaticMeshesBehavior::All;
+					}
+					if (AssetsPipeline->AnimationPipeline)
+					{
+						AssetsPipeline->AnimationPipeline->bImportAnimations = false;
+					}
+					bConfiguredStaticPipeline = true;
+				}
+				PipelineOverride->OverridePipelines.Add(GeneratedPipeline);
+			}
+			Task->Options = PipelineOverride;
+		}
+
+		if (!bConfiguredStaticPipeline)
+		{
+			UE_LOG(LogTSAVGDTFBatch, Error, TEXT("Skipping embedded model '%s': Unreal's static Interchange pipeline could not be configured safely."), **ExtractedPath);
+			continue;
+		}
 		ImportTasks.Add(Task);
 		ArchiveKeyByTask.Add(Task, Pair.Key);
 	}
 
 	if (ImportTasks.IsEmpty())
 	{
+		for (UInterchangePipelineBase* Pipeline : RootedImportPipelines)
+		{
+			if (Pipeline)
+			{
+				Pipeline->RemoveFromRoot();
+			}
+		}
 		OutResultMessage = LOCTEXT("EmbeddedModelExtractionFailed", "Embedded model resources were found but could not be extracted safely.");
 		return -1;
 	}
 
 	FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get().ImportAssetTasks(ImportTasks);
+	for (UInterchangePipelineBase* Pipeline : RootedImportPipelines)
+	{
+		if (Pipeline)
+		{
+			Pipeline->RemoveFromRoot();
+		}
+	}
 
 	UStaticMesh* ImportedBase = nullptr;
 	UStaticMesh* ImportedYoke = nullptr;
@@ -910,18 +1182,40 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 		}
 	};
 
+	// Interchange can report transient pre-combine glTF subobjects from
+	// UAssetImportTask::GetObjects() even though only the combined mesh package is
+	// saved. Resolve the assets from the registry after import so the catalog can
+	// never retain a soft path to one of those discarded subobjects.
+	TArray<FAssetData> PersistedMeshAssetData;
+	FAssetRegistryModule::GetRegistry().GetAssetsByPath(FName(*DestinationPath), PersistedMeshAssetData, true, false);
+	TArray<UStaticMesh*> PersistedMeshes;
+	for (const FAssetData& MeshAssetData : PersistedMeshAssetData)
+	{
+		const FString SavedPackageFilename = FPackageName::LongPackageNameToFilename(
+			MeshAssetData.PackageName.ToString(), FPackageName::GetAssetPackageExtension());
+		const bool bHasSavedPackage = FPaths::FileExists(SavedPackageFilename);
+		if (bHasSavedPackage && MeshAssetData.AssetClassPath == UStaticMesh::StaticClass()->GetClassPathName())
+		{
+			if (UStaticMesh* Mesh = Cast<UStaticMesh>(MeshAssetData.GetAsset()))
+			{
+				PersistedMeshes.AddUnique(Mesh);
+			}
+		}
+	}
+
 	for (UAssetImportTask* Task : ImportTasks)
 	{
 		TArray<UStaticMesh*> TaskMeshes;
-		for (UObject* Object : Task->GetObjects())
+		const FString SourceStem = Canonicalize(FPaths::GetBaseFilename(Task->Filename));
+		for (UStaticMesh* Mesh : PersistedMeshes)
 		{
-			if (UStaticMesh* Mesh = Cast<UStaticMesh>(Object))
+			const FString MeshName = Canonicalize(Mesh->GetName());
+			if (MeshName == SourceStem)
 			{
-				TaskMeshes.Add(Mesh);
+				TaskMeshes.AddUnique(Mesh);
 				AllImportedMeshes.AddUnique(Mesh);
 			}
 		}
-
 		const FString* ArchiveKey = ArchiveKeyByTask.Find(Task);
 		const TArray<TSharedPtr<FDMXGDTFModel>>* LinkedModels = ArchiveKey ? ModelsByArchiveKey.Find(*ArchiveKey) : nullptr;
 		for (int32 MeshIndex = 0; MeshIndex < TaskMeshes.Num(); ++MeshIndex)
@@ -1002,7 +1296,7 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 
 	if (AllImportedMeshes.IsEmpty())
 	{
-		OutResultMessage = LOCTEXT("EmbeddedModelImportFailed", "An embedded glTF/GLB model was extracted, but Unreal did not create a Static Mesh from it.");
+		OutResultMessage = LOCTEXT("EmbeddedModelImportFailed", "An embedded model was extracted, but Unreal did not create a Static Mesh from it.");
 		return -1;
 	}
 
@@ -1036,6 +1330,140 @@ int32 STSAVDMXFixtureBuilder::ImportEmbeddedGDTFModels(FText& OutResultMessage)
 	return AllImportedMeshes.Num();
 }
 
+int32 STSAVDMXFixtureBuilder::AssignPrimitiveFallbackModels()
+{
+	using namespace TSAVDMXFixtureBuilder::Private;
+	using namespace UE::DMX::GDTF;
+
+	UStaticMesh* MovingBase = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Base.SM_MovingHead_Base"));
+	UStaticMesh* MovingYoke = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Yoke.SM_MovingHead_Yoke"));
+	UStaticMesh* MovingHead = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Head.SM_MovingHead_Head"));
+	UStaticMesh* MovingLens = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Lens.SM_MovingHead_Lens"));
+	UStaticMesh* StaticBody = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_Static_Base.SM_Static_Base"));
+	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+
+	auto HasAttribute = [this](const TCHAR* Prefix)
+	{
+		for (const FDMXFixtureMode& Mode : ParsedModes)
+		{
+			for (const FDMXFixtureFunction& Function : Mode.Functions)
+			{
+				if (Canonicalize(Function.Attribute.Name.ToString()).StartsWith(Prefix))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	const bool bHasPanTilt = HasAttribute(TEXT("pan")) || HasAttribute(TEXT("tilt"));
+
+	auto PrimitiveMesh = [Cube, Cylinder, Sphere](const EDMXGDTFModelPrimitiveType PrimitiveType)
+	{
+		switch (PrimitiveType)
+		{
+		case EDMXGDTFModelPrimitiveType::Cylinder:
+		case EDMXGDTFModelPrimitiveType::Conventional:
+		case EDMXGDTFModelPrimitiveType::Conventional1_1:
+		case EDMXGDTFModelPrimitiveType::Pigtail:
+			return Cylinder ? Cylinder : Cube;
+		case EDMXGDTFModelPrimitiveType::Sphere:
+			return Sphere ? Sphere : Cube;
+		default:
+			return Cube;
+		}
+	};
+
+	int32 NumAssigned = 0;
+	auto AssignRole = [&NumAssigned](
+		TWeakObjectPtr<UStaticMesh>& Destination,
+		FVector& DestinationScale,
+		UStaticMesh* PreferredMesh,
+		const FDMXGDTFModel* Model)
+	{
+		if (Destination.IsValid() || !PreferredMesh)
+		{
+			return;
+		}
+		Destination = PreferredMesh;
+		DestinationScale = Model ? GetImportedMeshScale(*PreferredMesh, *Model) : FVector::OneVector;
+		++NumAssigned;
+	};
+
+	UDMXGDTF* GDTF = GDTFSource.IsValid() ? GDTFSource->LoadGDTF() : nullptr;
+	const TSharedPtr<FDMXGDTFFixtureType> FixtureType = GDTF && GDTF->GetDescription().IsValid()
+		? GDTF->GetDescription()->GetFixtureType()
+		: nullptr;
+	if (FixtureType.IsValid())
+	{
+		TMap<FName, EFixtureMeshRole> RoleByModelName;
+		if (FixtureType->GeometryCollect.IsValid())
+		{
+			for (const TSharedPtr<FDMXGDTFGeometry>& Geometry : FixtureType->GeometryCollect->GeometryArray)
+			{
+				GatherGeometryModelRoles(Geometry, 0, RoleByModelName);
+			}
+			for (const TSharedPtr<FDMXGDTFAxisGeometry>& Axis : FixtureType->GeometryCollect->AxisArray)
+			{
+				GatherGeometryModelRoles(StaticCastSharedPtr<FDMXGDTFGeometry>(Axis), 1, RoleByModelName);
+			}
+		}
+
+		for (const TSharedPtr<FDMXGDTFModel>& Model : FixtureType->Models)
+		{
+			if (!Model.IsValid())
+			{
+				continue;
+			}
+			const EFixtureMeshRole Role = RoleByModelName.Contains(Model->Name)
+				? RoleByModelName[Model->Name]
+				: GetMeshRole(*Model);
+			UStaticMesh* ShapeMesh = PrimitiveMesh(Model->PrimitiveType);
+			switch (Role)
+			{
+			case EFixtureMeshRole::Base:
+				AssignRole(BaseMesh, BaseMeshScale, bHasPanTilt ? MovingBase : (StaticBody ? StaticBody : ShapeMesh), Model.Get());
+				break;
+			case EFixtureMeshRole::Yoke:
+				AssignRole(YokeMesh, YokeMeshScale, MovingYoke ? MovingYoke : ShapeMesh, Model.Get());
+				break;
+			case EFixtureMeshRole::Head:
+				AssignRole(HeadMesh, HeadMeshScale, bHasPanTilt ? (MovingHead ? MovingHead : ShapeMesh) : (StaticBody ? StaticBody : ShapeMesh), Model.Get());
+				break;
+			case EFixtureMeshRole::Lens:
+				AssignRole(LensMesh, LensMeshScale, MovingLens ? MovingLens : ShapeMesh, Model.Get());
+				break;
+			default:
+				break;
+			}
+		}
+	}
+
+	if (!BaseMesh.IsValid() && !YokeMesh.IsValid() && !HeadMesh.IsValid() && !LensMesh.IsValid())
+	{
+		if (bHasPanTilt)
+		{
+			AssignRole(BaseMesh, BaseMeshScale, MovingBase ? MovingBase : Cube, nullptr);
+			AssignRole(YokeMesh, YokeMeshScale, MovingYoke ? MovingYoke : Cube, nullptr);
+			AssignRole(HeadMesh, HeadMeshScale, MovingHead ? MovingHead : Cylinder, nullptr);
+			AssignRole(LensMesh, LensMeshScale, MovingLens ? MovingLens : Cylinder, nullptr);
+		}
+		else
+		{
+			AssignRole(HeadMesh, HeadMeshScale, StaticBody ? StaticBody : Cylinder, nullptr);
+		}
+	}
+
+	return NumAssigned;
+}
+
 void STSAVDMXFixtureBuilder::OnGDTFChanged(const FAssetData& AssetData)
 {
 	GDTFSource = Cast<UDMXImportGDTF>(AssetData.GetAsset());
@@ -1044,7 +1472,13 @@ void STSAVDMXFixtureBuilder::OnGDTFChanged(const FAssetData& AssetData)
 	{
 		FText EmbeddedModelResult;
 		const int32 NumEmbeddedMeshes = ImportEmbeddedGDTFModels(EmbeddedModelResult);
-		SetStatus(EmbeddedModelResult, NumEmbeddedMeshes >= 0);
+		const int32 NumFallbackMeshes = AssignPrimitiveFallbackModels();
+		SetStatus(
+			NumFallbackMeshes > 0
+				? FText::Format(LOCTEXT("EmbeddedAndFallbackModelResult", "{0} Completed {1} missing fixture part(s) from GDTF primitive geometry."),
+					EmbeddedModelResult, FText::AsNumber(NumFallbackMeshes))
+				: EmbeddedModelResult,
+			NumEmbeddedMeshes >= 0);
 	}
 }
 
@@ -1562,6 +1996,553 @@ ATSAVDMXFixture* STSAVDMXFixtureBuilder::FindSelectedFixture() const
 		if (ATSAVDMXFixture* Fixture = Cast<ATSAVDMXFixture>(*Iterator)) return Fixture;
 	}
 	return nullptr;
+}
+
+bool STSAVDMXFixtureBuilder::BuildCompleteFixtureLibrary(FString& OutSummary)
+{
+	using namespace UE::DMX::GDTF;
+
+	constexpr int32 ExpectedFixtureCount = 607;
+	const FString LibraryPackageName = TEXT("/Game/TSAV/Fixtures/DMX/DMX_TSAV_AllFixtures");
+	const FString LibraryAssetName = TEXT("DMX_TSAV_AllFixtures");
+	const FString CatalogPackageName = TEXT("/Game/TSAV/Fixtures/DMX/DA_TSAVFixtureCatalog");
+	const FString CatalogAssetName = TEXT("DA_TSAVFixtureCatalog");
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+	AssetRegistry.ScanPathsSynchronous({ TEXT("/Game/DMX/GDTF_Fixtures") }, true);
+	FARFilter Filter;
+	Filter.PackagePaths.Add(TEXT("/Game/DMX/GDTF_Fixtures"));
+	Filter.ClassPaths.Add(UDMXImportGDTF::StaticClass()->GetClassPathName());
+	Filter.bRecursivePaths = true;
+	TArray<FAssetData> GDTFAssets;
+	AssetRegistry.GetAssets(Filter, GDTFAssets);
+	GDTFAssets.Sort([](const FAssetData& A, const FAssetData& B)
+	{
+		return A.AssetName.LexicalLess(B.AssetName);
+	});
+
+	if (GDTFAssets.Num() != ExpectedFixtureCount)
+	{
+		OutSummary = FString::Printf(TEXT("Expected %d imported GDTF assets, but found %d under /Game/DMX/GDTF_Fixtures."),
+			ExpectedFixtureCount, GDTFAssets.Num());
+		UE_LOG(LogTSAVGDTFBatch, Error, TEXT("%s"), *OutSummary);
+		return false;
+	}
+
+	UPackage* LibraryPackage = CreatePackage(*LibraryPackageName);
+	UDMXLibrary* Library = FindObject<UDMXLibrary>(LibraryPackage, *LibraryAssetName);
+	if (!Library)
+	{
+		Library = NewObject<UDMXLibrary>(LibraryPackage, *LibraryAssetName, RF_Public | RF_Standalone | RF_Transactional);
+		FAssetRegistryModule::AssetCreated(Library);
+	}
+	else
+	{
+		Library->Modify();
+		const TArray<UDMXEntity*> ExistingEntities = Library->GetEntities();
+		for (UDMXEntity* Entity : ExistingEntities)
+		{
+			if (Entity)
+			{
+				Entity->Destroy();
+			}
+		}
+	}
+
+	UPackage* CatalogPackage = CreatePackage(*CatalogPackageName);
+	UTSAVDMXFixtureCatalog* Catalog = FindObject<UTSAVDMXFixtureCatalog>(CatalogPackage, *CatalogAssetName);
+	if (!Catalog)
+	{
+		Catalog = NewObject<UTSAVDMXFixtureCatalog>(CatalogPackage, *CatalogAssetName, RF_Public | RF_Standalone | RF_Transactional);
+		FAssetRegistryModule::AssetCreated(Catalog);
+	}
+	Catalog->Modify();
+	Catalog->Fixtures.Reset(GDTFAssets.Num());
+
+	auto BuildSafeFallbackMode = []()
+	{
+		FDMXFixtureMode Mode;
+		Mode.ModeName = TEXT("TSAV Safe 9 Channel");
+		auto AddFunction = [&Mode](const TCHAR* Name, const int32 Channel, const EDMXFixtureSignalFormat Format = EDMXFixtureSignalFormat::E8Bit)
+		{
+			FDMXFixtureFunction Function;
+			Function.Attribute = FDMXAttributeName(Name);
+			Function.FunctionName = Name;
+			Function.Channel = Channel;
+			Function.DataType = Format;
+			Mode.Functions.Add(Function);
+		};
+		AddFunction(TEXT("Dimmer"), 1);
+		AddFunction(TEXT("Pan"), 2, EDMXFixtureSignalFormat::E16Bit);
+		AddFunction(TEXT("Tilt"), 4, EDMXFixtureSignalFormat::E16Bit);
+		AddFunction(TEXT("Zoom"), 6);
+		AddFunction(TEXT("ColorAdd_R"), 7);
+		AddFunction(TEXT("ColorAdd_G"), 8);
+		AddFunction(TEXT("ColorAdd_B"), 9);
+		Mode.bAutoChannelSpan = true;
+		return Mode;
+	};
+
+	auto ResetBuilder = [](STSAVDMXFixtureBuilder& Builder)
+	{
+		Builder.GDTFSource.Reset();
+		Builder.BaseMesh.Reset();
+		Builder.YokeMesh.Reset();
+		Builder.HeadMesh.Reset();
+		Builder.LensMesh.Reset();
+		Builder.BaseMeshScale = FVector::OneVector;
+		Builder.YokeMeshScale = FVector::OneVector;
+		Builder.HeadMeshScale = FVector::OneVector;
+		Builder.LensMeshScale = FVector::OneVector;
+		Builder.FixtureScale = 1.0f;
+		Builder.ModelRotation = FRotator::ZeroRotator;
+		Builder.PanPivotOffset = FVector::ZeroVector;
+		Builder.TiltPivotOffset = FVector(0.0f, 0.0f, 40.0f);
+		Builder.PanPivotRotation = FRotator::ZeroRotator;
+		Builder.TiltPivotRotation = FRotator::ZeroRotator;
+		Builder.LensOffset = FVector(20.0f, 0.0f, 0.0f);
+		Builder.LensMeshRotation = FRotator::ZeroRotator;
+		Builder.BeamRotation = FRotator::ZeroRotator;
+		Builder.PanMin = -270.0f;
+		Builder.PanMax = 270.0f;
+		Builder.TiltMin = -135.0f;
+		Builder.TiltMax = 135.0f;
+		Builder.PanSpeed = 360.0f;
+		Builder.TiltSpeed = 360.0f;
+		Builder.MaximumIntensity = 50000.0f;
+		Builder.MinimumBeamAngle = 5.0f;
+		Builder.MaximumBeamAngle = 35.0f;
+		Builder.AttenuationRadius = 3000.0f;
+		Builder.ParsedModes.Reset();
+		Builder.ModeOptions.Reset();
+		Builder.SelectedMode.Reset();
+	};
+
+	TSharedRef<STSAVDMXFixtureBuilder> Builder = MakeShared<STSAVDMXFixtureBuilder>();
+	int32 NextUniverse = 1;
+	int32 NextAddress = 1;
+	int32 NumEmbeddedModels = 0;
+	int32 NumPrimitiveFallbacks = 0;
+	int32 NumInvalidProfileFallbacks = 0;
+	int32 NumFailures = 0;
+	FScopedSlowTask SlowTask(GDTFAssets.Num(), LOCTEXT("BuildCompleteFixtureLibraryProgress", "Building the complete TSAV GDTF fixture library..."));
+	SlowTask.MakeDialogDelayed(1.0f, false, false);
+
+	for (int32 AssetIndex = 0; AssetIndex < GDTFAssets.Num(); ++AssetIndex)
+	{
+		const FAssetData& AssetData = GDTFAssets[AssetIndex];
+		SlowTask.EnterProgressFrame(1.0f, FText::Format(LOCTEXT("BuildFixtureProgress", "Building {0} ({1}/{2})"),
+			FText::FromName(AssetData.AssetName), FText::AsNumber(AssetIndex + 1), FText::AsNumber(GDTFAssets.Num())));
+		ResetBuilder(*Builder);
+
+		UDMXImportGDTF* GDTFSourceAsset = Cast<UDMXImportGDTF>(AssetData.GetAsset());
+		if (!GDTFSourceAsset)
+		{
+			++NumFailures;
+			UE_LOG(LogTSAVGDTFBatch, Error, TEXT("Could not load GDTF asset %s."), *AssetData.GetObjectPathString());
+			continue;
+		}
+		Builder->GDTFSource = GDTFSourceAsset;
+
+		UDMXGDTF* ParsedGDTF = GDTFSourceAsset->LoadGDTF();
+		const TSharedPtr<FDMXGDTFFixtureType> ParsedFixtureType = ParsedGDTF && ParsedGDTF->GetDescription().IsValid()
+			? ParsedGDTF->GetDescription()->GetFixtureType()
+			: nullptr;
+		const bool bInvalidProfile = !ParsedFixtureType.IsValid();
+		if (bInvalidProfile)
+		{
+			Builder->ParsedModes = { BuildSafeFallbackMode() };
+			Builder->ModeOptions = { MakeShared<FString>(Builder->ParsedModes[0].ModeName) };
+			Builder->SelectedMode = Builder->ModeOptions[0];
+			++NumInvalidProfileFallbacks;
+		}
+		else
+		{
+			Builder->RefreshGDTFModes(true);
+			int32 FirstValidModeIndex = INDEX_NONE;
+			for (int32 ModeIndex = 0; ModeIndex < Builder->ParsedModes.Num(); ++ModeIndex)
+			{
+				int32 Span = 0;
+				for (const FDMXFixtureFunction& Function : Builder->ParsedModes[ModeIndex].Functions)
+				{
+					Span = FMath::Max(Span, Function.GetLastChannel());
+				}
+				if (Span > 0 && Span <= 512)
+				{
+					FirstValidModeIndex = ModeIndex;
+					break;
+				}
+			}
+			if (FirstValidModeIndex == INDEX_NONE)
+			{
+				Builder->ParsedModes = { BuildSafeFallbackMode() };
+				Builder->ModeOptions = { MakeShared<FString>(Builder->ParsedModes[0].ModeName) };
+				Builder->SelectedMode = Builder->ModeOptions[0];
+				++NumInvalidProfileFallbacks;
+			}
+			else if (Builder->ModeOptions.IsValidIndex(FirstValidModeIndex))
+			{
+				Builder->SelectedMode = Builder->ModeOptions[FirstValidModeIndex];
+				Builder->AdoptSelectedModePhysicalProperties();
+			}
+		}
+
+		FText EmbeddedResult;
+		const int32 EmbeddedMeshCount = bInvalidProfile ? 0 : Builder->ImportEmbeddedGDTFModels(EmbeddedResult);
+		const int32 FallbackMeshCount = Builder->AssignPrimitiveFallbackModels();
+		if (EmbeddedMeshCount > 0)
+		{
+			++NumEmbeddedModels;
+		}
+		if (FallbackMeshCount > 0)
+		{
+			++NumPrimitiveFallbacks;
+		}
+		if (!Builder->BaseMesh.IsValid() && !Builder->YokeMesh.IsValid() && !Builder->HeadMesh.IsValid() && !Builder->LensMesh.IsValid())
+		{
+			++NumFailures;
+			UE_LOG(LogTSAVGDTFBatch, Error, TEXT("No model could be assigned to %s."), *AssetData.AssetName.ToString());
+			continue;
+		}
+
+		const int32 SelectedModeIndex = Builder->GetSelectedModeIndex();
+
+		const FString CleanName = ObjectTools::SanitizeObjectName(AssetData.AssetName.ToString());
+		FDMXEntityFixtureTypeConstructionParams TypeParams;
+		TypeParams.ParentDMXLibrary = Library;
+		TypeParams.Modes = Builder->ParsedModes;
+		UDMXEntityFixtureType* FixtureType = UDMXEntityFixtureType::CreateFixtureTypeInLibrary(
+			TypeParams, CleanName + TEXT(" Type"), true);
+		if (!FixtureType)
+		{
+			++NumFailures;
+			continue;
+		}
+		FixtureType->GDTFSource = GDTFSourceAsset;
+		for (int32 ModeIndex = 0; ModeIndex < FixtureType->Modes.Num(); ++ModeIndex)
+		{
+			FixtureType->UpdateChannelSpan(ModeIndex);
+		}
+		const int32 ActiveModeIndex = FMath::Clamp(SelectedModeIndex, 0, FixtureType->Modes.Num() - 1);
+		const FDMXFixtureMode& ActiveMode = FixtureType->Modes[ActiveModeIndex];
+		// FDMXEntityFixturePatchCache reports the amount of actual data it stores,
+		// which may differ from FDMXFixtureMode::ChannelSpan when a GDTF has gaps,
+		// overlapping logical functions, or a matrix. Reserve the larger footprint
+		// to guarantee that generated patches never overlap in a universe.
+		int32 PatchDataSpan = 0;
+		for (const FDMXFixtureFunction& Function : ActiveMode.Functions)
+		{
+			PatchDataSpan += Function.GetNumChannels();
+		}
+		if (ActiveMode.bFixtureMatrixEnabled && !ActiveMode.FixtureMatrixConfig.CellAttributes.IsEmpty())
+		{
+			PatchDataSpan = FMath::Max(PatchDataSpan, ActiveMode.FixtureMatrixConfig.FirstCellChannel - 1);
+			PatchDataSpan += ActiveMode.FixtureMatrixConfig.GetNumChannels();
+		}
+		if (!ActiveMode.bAutoChannelSpan)
+		{
+			PatchDataSpan = FMath::Max(PatchDataSpan, ActiveMode.ChannelSpan);
+		}
+		PatchDataSpan = FMath::Clamp(PatchDataSpan, 1, 512);
+		const int32 AddressAllocationSpan = FMath::Max(FMath::Clamp(ActiveMode.ChannelSpan, 1, 512), PatchDataSpan);
+		if (NextAddress + AddressAllocationSpan - 1 > 512)
+		{
+			++NextUniverse;
+			NextAddress = 1;
+		}
+
+		FDMXEntityFixturePatchConstructionParams PatchParams;
+		PatchParams.FixtureTypeRef = FDMXEntityFixtureTypeRef(FixtureType);
+		PatchParams.ActiveMode = ActiveModeIndex;
+		PatchParams.UniverseID = NextUniverse;
+		PatchParams.StartingAddress = NextAddress;
+		// Mark the library once after the batch. Passing true here invokes editor
+		// PostEditChange for every patch, which realigns the freshly imported mode
+		// channels after their allocation span has already been calculated.
+		UDMXEntityFixturePatch* Patch = UDMXEntityFixturePatch::CreateFixturePatchInLibrary(PatchParams, CleanName, false);
+		if (!Patch)
+		{
+			FixtureType->Destroy();
+			++NumFailures;
+			continue;
+		}
+		Patch->bReceiveDMXInEditor = true;
+		Patch->RebuildCache();
+		const int32 ChannelSpan = FMath::Clamp(Patch->GetChannelSpan(), 1, 512);
+
+		FTSAVDMXFixtureDefinition& Definition = Catalog->Fixtures.AddDefaulted_GetRef();
+		Definition.DefinitionId = AssetData.AssetName;
+		Definition.DisplayName = FText::FromString(ParsedFixtureType.IsValid()
+			? (!ParsedFixtureType->LongName.IsEmpty() ? ParsedFixtureType->LongName : ParsedFixtureType->Name.ToString())
+			: AssetData.AssetName.ToString().Replace(TEXT("_"), TEXT(" ")));
+		Definition.Manufacturer = FText::FromString(ParsedFixtureType.IsValid() ? ParsedFixtureType->Manufacturer : TEXT("Fine Art"));
+		Definition.Revision = AssetData.AssetName.ToString();
+		Definition.GDTFSource = GDTFSourceAsset;
+		Definition.GDTFModeName = Builder->SelectedMode.IsValid() ? *Builder->SelectedMode : Builder->ParsedModes[0].ModeName;
+		Definition.DMXLibrary = Library;
+		Definition.FixtureTypeId = FixtureType->GetID();
+		Definition.FixturePatchId = Patch->GetID();
+		Definition.Universe = NextUniverse;
+		Definition.Address = NextAddress;
+		Definition.ChannelSpan = ChannelSpan;
+		Definition.BaseMesh = Builder->BaseMesh.Get();
+		Definition.YokeMesh = Builder->YokeMesh.Get();
+		Definition.HeadMesh = Builder->HeadMesh.Get();
+		Definition.LensMesh = Builder->LensMesh.Get();
+		Definition.FixtureScale = Builder->FixtureScale;
+		Definition.ModelRotation = Builder->ModelRotation;
+		Definition.BaseMeshScale = Builder->BaseMeshScale;
+		Definition.YokeMeshScale = Builder->YokeMeshScale;
+		Definition.HeadMeshScale = Builder->HeadMeshScale;
+		Definition.LensMeshScale = Builder->LensMeshScale;
+		Definition.PanPivotOffset = Builder->PanPivotOffset;
+		Definition.TiltPivotOffset = Builder->TiltPivotOffset;
+		Definition.PanPivotRotation = Builder->PanPivotRotation;
+		Definition.TiltPivotRotation = Builder->TiltPivotRotation;
+		Definition.PanMinDegrees = Builder->PanMin;
+		Definition.PanMaxDegrees = Builder->PanMax;
+		Definition.TiltMinDegrees = Builder->TiltMin;
+		Definition.TiltMaxDegrees = Builder->TiltMax;
+		Definition.PanSpeedDegreesPerSecond = Builder->PanSpeed;
+		Definition.TiltSpeedDegreesPerSecond = Builder->TiltSpeed;
+		Definition.LensOffset = Builder->LensOffset;
+		Definition.LensMeshRotation = Builder->LensMeshRotation;
+		Definition.BeamRotation = Builder->BeamRotation;
+		Definition.MaximumIntensityLumens = Builder->MaximumIntensity;
+		Definition.MinimumBeamAngleDegrees = Builder->MinimumBeamAngle;
+		Definition.MaximumBeamAngleDegrees = Builder->MaximumBeamAngle;
+		Definition.AttenuationRadiusCm = Builder->AttenuationRadius;
+		Definition.bUsesEmbeddedModel = EmbeddedMeshCount > 0;
+		Definition.bUsesPrimitiveFallback = FallbackMeshCount > 0;
+		Definition.bUsesInvalidProfileFallback = bInvalidProfile;
+
+		NextAddress += AddressAllocationSpan;
+	}
+
+	// Interchange may keep temporary glTF subobject packages alive until the end
+	// of the full batch and then remove them. Finalize against the physical asset
+	// state only after every import has finished, so no catalog soft reference can
+	// point at an object that disappears during the same editor session.
+	UStaticMesh* RepairBase = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Base.SM_MovingHead_Base"));
+	UStaticMesh* RepairYoke = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Yoke.SM_MovingHead_Yoke"));
+	UStaticMesh* RepairHead = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Head.SM_MovingHead_Head"));
+	UStaticMesh* RepairLens = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/DMXFixtures/LightFixtures/Meshes/SM_MovingHead_Lens.SM_MovingHead_Lens"));
+	UStaticMesh* RepairCube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	int32 NumFinalizedMeshReferences = 0;
+	auto FinalizeMeshReference = [&NumFinalizedMeshReferences, RepairCube](TSoftObjectPtr<UStaticMesh>& MeshReference, UStaticMesh* PreferredFallback)
+	{
+		if (MeshReference.IsNull())
+		{
+			return false;
+		}
+		bool bPhysicalPackageExists = true;
+		if (bPhysicalPackageExists)
+		{
+			const FString PackageName = MeshReference.ToSoftObjectPath().GetLongPackageName();
+			if (PackageName.StartsWith(TEXT("/Game/")))
+			{
+				const FString PackageFilename = FPackageName::LongPackageNameToFilename(
+					PackageName, FPackageName::GetAssetPackageExtension());
+				bPhysicalPackageExists = FPaths::FileExists(PackageFilename);
+			}
+		}
+		if (!bPhysicalPackageExists || !MeshReference.LoadSynchronous())
+		{
+			MeshReference = PreferredFallback ? PreferredFallback : RepairCube;
+			++NumFinalizedMeshReferences;
+			return true;
+		}
+		return false;
+	};
+
+	for (FTSAVDMXFixtureDefinition& Definition : Catalog->Fixtures)
+	{
+		const bool bRepairedBase = FinalizeMeshReference(Definition.BaseMesh, RepairBase);
+		const bool bRepairedYoke = FinalizeMeshReference(Definition.YokeMesh, RepairYoke);
+		const bool bRepairedHead = FinalizeMeshReference(Definition.HeadMesh, RepairHead);
+		const bool bRepairedLens = FinalizeMeshReference(Definition.LensMesh, RepairLens);
+		if ((bRepairedBase || bRepairedYoke || bRepairedHead || bRepairedLens) && !Definition.bUsesPrimitiveFallback)
+		{
+			Definition.bUsesPrimitiveFallback = true;
+			++NumPrimitiveFallbacks;
+		}
+
+		if (UDMXEntityFixturePatch* FinalPatch = Cast<UDMXEntityFixturePatch>(Library->FindEntity(Definition.FixturePatchId)))
+		{
+			FinalPatch->RebuildCache();
+			Definition.ChannelSpan = FMath::Clamp(FinalPatch->GetChannelSpan(), 1, 512);
+		}
+	}
+
+	Library->MarkPackageDirty();
+	Catalog->MarkPackageDirty();
+	const TArray<UPackage*> PackagesToSave{ LibraryPackage, CatalogPackage };
+	bool bSaved = UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, true);
+
+	// Saving is the point where Interchange removes replaced subobject packages
+	// and fixture patches settle on their persisted cache state. Run the same
+	// normalization once more after that cleanup, then save the corrected catalog.
+	for (FTSAVDMXFixtureDefinition& Definition : Catalog->Fixtures)
+	{
+		const bool bRepairedBase = FinalizeMeshReference(Definition.BaseMesh, RepairBase);
+		const bool bRepairedYoke = FinalizeMeshReference(Definition.YokeMesh, RepairYoke);
+		const bool bRepairedHead = FinalizeMeshReference(Definition.HeadMesh, RepairHead);
+		const bool bRepairedLens = FinalizeMeshReference(Definition.LensMesh, RepairLens);
+		if ((bRepairedBase || bRepairedYoke || bRepairedHead || bRepairedLens) && !Definition.bUsesPrimitiveFallback)
+		{
+			Definition.bUsesPrimitiveFallback = true;
+			++NumPrimitiveFallbacks;
+		}
+
+		if (UDMXEntityFixturePatch* FinalPatch = Cast<UDMXEntityFixturePatch>(Library->FindEntity(Definition.FixturePatchId)))
+		{
+			FinalPatch->RebuildCache();
+			Definition.ChannelSpan = FMath::Clamp(FinalPatch->GetChannelSpan(), 1, 512);
+		}
+	}
+	Catalog->MarkPackageDirty();
+	bSaved = UEditorLoadingAndSavingUtils::SavePackages({ CatalogPackage }, true) && bSaved;
+	const bool bComplete = bSaved && NumFailures == 0 && Catalog->Fixtures.Num() == ExpectedFixtureCount;
+	OutSummary = FString::Printf(
+		TEXT("Built %d/%d fixtures across %d DMX universes; %d use imported embedded models, %d use GDTF primitive/fallback parts, %d mesh references were finalized, %d use safe-mode recovery, including invalid profiles; failures=%d; saved=%s."),
+		Catalog->Fixtures.Num(), ExpectedFixtureCount, NextUniverse, NumEmbeddedModels, NumPrimitiveFallbacks,
+		NumFinalizedMeshReferences, NumInvalidProfileFallbacks, NumFailures, bSaved ? TEXT("true") : TEXT("false"));
+	if (bComplete)
+	{
+		UE_LOG(LogTSAVGDTFBatch, Display, TEXT("CODEX_TSAV_GDTF_BATCH_BUILD_SUCCESS %s"), *OutSummary);
+	}
+	else
+	{
+		UE_LOG(LogTSAVGDTFBatch, Error, TEXT("CODEX_TSAV_GDTF_BATCH_BUILD_FAILURE %s"), *OutSummary);
+	}
+	return bComplete;
+}
+
+bool STSAVDMXFixtureBuilder::ValidateCompleteFixtureLibrary(FString& OutSummary)
+{
+	constexpr int32 ExpectedFixtureCount = 607;
+	UTSAVDMXFixtureCatalog* Catalog = Cast<UTSAVDMXFixtureCatalog>(UTSAVDMXFixtureCatalog::DefaultCatalogPath.TryLoad());
+	UDMXLibrary* Library = LoadObject<UDMXLibrary>(nullptr,
+		TEXT("/Game/TSAV/Fixtures/DMX/DMX_TSAV_AllFixtures.DMX_TSAV_AllFixtures"));
+	if (!Catalog || !Library)
+	{
+		OutSummary = TEXT("The generated fixture catalog or DMX library could not be loaded.");
+		return false;
+	}
+
+	const TArray<UDMXEntityFixtureType*> FixtureTypes = Library->GetEntitiesTypeCast<UDMXEntityFixtureType>();
+	const TArray<UDMXEntityFixturePatch*> FixturePatches = Library->GetEntitiesTypeCast<UDMXEntityFixturePatch>();
+	int32 NumFailures = 0;
+	int32 NumFallbackModels = 0;
+	int32 NumInvalidProfiles = 0;
+	int32 NumRenderableModelAssets = 0;
+	FPreviewScene PreviewScene;
+	ATSAVDMXFixture* ValidationActor = PreviewScene.GetWorld()->SpawnActor<ATSAVDMXFixture>();
+	if (!ValidationActor)
+	{
+		OutSummary = TEXT("A transient fixture validation actor could not be spawned.");
+		return false;
+	}
+
+	for (const FTSAVDMXFixtureDefinition& Definition : Catalog->Fixtures)
+	{
+		UDMXEntityFixtureType* FixtureType = Cast<UDMXEntityFixtureType>(Library->FindEntity(Definition.FixtureTypeId));
+		UDMXEntityFixturePatch* Patch = Cast<UDMXEntityFixturePatch>(Library->FindEntity(Definition.FixturePatchId));
+		const bool bHasModelReference = !Definition.BaseMesh.IsNull() || !Definition.YokeMesh.IsNull() ||
+			!Definition.HeadMesh.IsNull() || !Definition.LensMesh.IsNull();
+		const bool bApplied = ValidationActor->ApplyFixtureDefinition(Definition, true);
+		ValidationActor->ApplyNormalizedDMX(0.25f, 0.75f, 0.5f, FLinearColor(0.2f, 0.4f, 0.8f), 0.6f, true);
+
+		auto IsRenderableMesh = [&NumRenderableModelAssets, &Definition](const TSoftObjectPtr<UStaticMesh>& MeshReference, const FVector& PartScale)
+		{
+			if (MeshReference.IsNull())
+			{
+				return true;
+			}
+			UStaticMesh* Mesh = MeshReference.LoadSynchronous();
+			if (!Mesh || Mesh->GetNumVertices(0) <= 0)
+			{
+				return false;
+			}
+			const FVector Size = Mesh->GetBoundingBox().GetSize() * PartScale.GetAbs() * FMath::Max(Definition.FixtureScale, 0.001f);
+			const bool bFiniteBounds = !Size.ContainsNaN() && FMath::IsFinite(Size.X) && FMath::IsFinite(Size.Y) && FMath::IsFinite(Size.Z);
+			const bool bSaneBounds = Size.GetMax() > 0.001 && Size.GetMax() < 1000000.0 && Size.GetMin() >= 0.0;
+			if (bFiniteBounds && bSaneBounds)
+			{
+				++NumRenderableModelAssets;
+				return true;
+			}
+			return false;
+		};
+		const bool bModelAssetsValid = IsRenderableMesh(Definition.BaseMesh, Definition.BaseMeshScale) &&
+			IsRenderableMesh(Definition.YokeMesh, Definition.YokeMeshScale) &&
+			IsRenderableMesh(Definition.HeadMesh, Definition.HeadMeshScale) &&
+			IsRenderableMesh(Definition.LensMesh, Definition.LensMeshScale);
+		const float ExpectedPan = FMath::Lerp(Definition.PanMinDegrees, Definition.PanMaxDegrees, 0.25f);
+		const float ExpectedTilt = FMath::Lerp(Definition.TiltMinDegrees, Definition.TiltMaxDegrees, 0.75f);
+		const float NarrowAngle = FMath::Clamp(Definition.MinimumBeamAngleDegrees, 1.0f, 89.0f);
+		const float WideAngle = FMath::Clamp(FMath::Max(Definition.MaximumBeamAngleDegrees, NarrowAngle), 1.0f, 89.0f);
+		const float ExpectedConeAngle = FMath::Lerp(WideAngle, NarrowAngle, 0.6f);
+		const USpotLightComponent* Beam = ValidationActor->GetBeamLightComponent();
+		const bool bBeamValid = Beam &&
+			FMath::IsNearlyEqual(Beam->Intensity, Definition.MaximumIntensityLumens * 0.5f, 0.1f) &&
+			FMath::IsNearlyEqual(Beam->OuterConeAngle, ExpectedConeAngle, 0.01f) &&
+			Beam->GetLightColor().Equals(FLinearColor(0.2f, 0.4f, 0.8f), 0.02f);
+		const bool bBehaviorValid = FMath::IsNearlyEqual(ValidationActor->CurrentPanDegrees, ExpectedPan) &&
+			FMath::IsNearlyEqual(ValidationActor->CurrentTiltDegrees, ExpectedTilt) &&
+			FMath::IsNearlyEqual(ValidationActor->LastDimmerValue, 0.5f) &&
+			bBeamValid;
+		const bool bPatchValid = FixtureType && Patch && Patch->GetFixtureType() == FixtureType &&
+			Patch->GetUniverseID() == Definition.Universe && Patch->GetStartingChannel() == Definition.Address &&
+			Patch->GetChannelSpan() == Definition.ChannelSpan && Definition.ChannelSpan > 0 &&
+			Definition.Address + Definition.ChannelSpan - 1 <= 512;
+		const bool bPhysicalValuesValid = FMath::IsFinite(Definition.PanMinDegrees) && FMath::IsFinite(Definition.PanMaxDegrees) &&
+			FMath::IsFinite(Definition.TiltMinDegrees) && FMath::IsFinite(Definition.TiltMaxDegrees) &&
+			Definition.MinimumBeamAngleDegrees > 0.0f && Definition.MaximumBeamAngleDegrees >= Definition.MinimumBeamAngleDegrees;
+		if (Definition.GDTFSource.IsNull() || !bHasModelReference || !bModelAssetsValid || !bApplied || !bBehaviorValid || !bPatchValid || !bPhysicalValuesValid)
+		{
+			++NumFailures;
+			UE_LOG(LogTSAVGDTFBatch, Error,
+				TEXT("Fixture validation failed for %s: source=%s model=%s renderable=%s applied=%s behavior=%s patch=%s physical=%s"),
+				*Definition.DefinitionId.ToString(), Definition.GDTFSource.IsNull() ? TEXT("false") : TEXT("true"),
+				bHasModelReference ? TEXT("true") : TEXT("false"), bModelAssetsValid ? TEXT("true") : TEXT("false"),
+				bApplied ? TEXT("true") : TEXT("false"), bBehaviorValid ? TEXT("true") : TEXT("false"),
+				bPatchValid ? TEXT("true") : TEXT("false"), bPhysicalValuesValid ? TEXT("true") : TEXT("false"));
+			if (!bPatchValid)
+			{
+				UE_LOG(LogTSAVGDTFBatch, Error,
+					TEXT("Patch details for %s: expected universe=%d address=%d span=%d; actual universe=%d address=%d span=%d; typeMatch=%s."),
+					*Definition.DefinitionId.ToString(), Definition.Universe, Definition.Address, Definition.ChannelSpan,
+					Patch ? Patch->GetUniverseID() : -1, Patch ? Patch->GetStartingChannel() : -1,
+					Patch ? Patch->GetChannelSpan() : -1,
+					(Patch && FixtureType && Patch->GetFixtureType() == FixtureType) ? TEXT("true") : TEXT("false"));
+			}
+		}
+		NumFallbackModels += Definition.bUsesPrimitiveFallback ? 1 : 0;
+		NumInvalidProfiles += Definition.bUsesInvalidProfileFallback ? 1 : 0;
+	}
+
+	const bool bCountsValid = Catalog->Fixtures.Num() == ExpectedFixtureCount &&
+		FixtureTypes.Num() == ExpectedFixtureCount && FixturePatches.Num() == ExpectedFixtureCount;
+	const bool bSuccess = bCountsValid && NumFailures == 0;
+	OutSummary = FString::Printf(
+		TEXT("Validated catalog=%d, fixture types=%d, patches=%d, normalized behavior and renderable geometry=%d/%d, renderable model assets=%d, fallback models=%d, invalid-profile recoveries=%d."),
+		Catalog->Fixtures.Num(), FixtureTypes.Num(), FixturePatches.Num(), Catalog->Fixtures.Num() - NumFailures,
+		Catalog->Fixtures.Num(), NumRenderableModelAssets, NumFallbackModels, NumInvalidProfiles);
+	if (bSuccess)
+	{
+		UE_LOG(LogTSAVGDTFBatch, Display, TEXT("CODEX_TSAV_GDTF_BATCH_VALIDATION_SUCCESS %s"), *OutSummary);
+	}
+	else
+	{
+		UE_LOG(LogTSAVGDTFBatch, Error, TEXT("CODEX_TSAV_GDTF_BATCH_VALIDATION_FAILURE %s"), *OutSummary);
+	}
+	return bSuccess;
 }
 
 FText STSAVDMXFixtureBuilder::GetSelectionStatus() const

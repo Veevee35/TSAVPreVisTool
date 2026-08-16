@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "DMXTypes.h"
 #include "GameFramework/Actor.h"
+#include "TSAVDMXFixtureCatalog.h"
 
 #include "TSAVDMXFixture.generated.h"
 
@@ -29,6 +30,10 @@ class TSAVLEDTOOLS_API ATSAVDMXFixture final : public AActor
 
 public:
 	ATSAVDMXFixture();
+
+	/** Stable generated-catalog identifier for this fixture option. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "TSAV Fixture|Definition")
+	FName FixtureDefinitionId;
 
 	/** Original GDTF used to create the DMX fixture type and patch. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Definition")
@@ -196,8 +201,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|DMX")
 	void SetFixturePatch(UDMXEntityFixturePatch* FixturePatch);
 
+	/** Applies a generated catalog option, including model, articulation, beam, and default DMX patch. */
+	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|Definition")
+	bool ApplyFixtureDefinition(const FTSAVDMXFixtureDefinition& Definition, bool bApplyDefaultPatch = true);
+
+	/** Direct normalized input used by runtime tools and deterministic fixture validation. */
+	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|DMX")
+	void ApplyNormalizedDMX(float Pan, float Tilt, float Dimmer, FLinearColor Color, float Zoom, bool bSnap = true);
+
 	UFUNCTION(BlueprintPure, Category = "TSAV Fixture|DMX")
 	UDMXEntityFixturePatch* GetFixturePatch() const;
+
+	UFUNCTION(BlueprintPure, Category = "TSAV Fixture|Components")
+	USpotLightComponent* GetBeamLightComponent() const { return BeamLight; }
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TSAV Fixture|Status")
 	float CurrentPanDegrees = 0.0f;

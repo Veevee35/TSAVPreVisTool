@@ -51,7 +51,8 @@ $TsavEditorOnlyPlugins = @(
     'DaySequence',
     'DMXControlConsole',
     'DMXDisplayCluster',
-    'DMXFixtures',
+    # DMXFixtures remains enabled: the generated catalog deliberately uses its
+    # runtime base/yoke/head/lens meshes when a GDTF omits authored geometry.
     'DMXPixelMapping',
     'LiveLinkControlRig',
     'LiveLinkHub',
