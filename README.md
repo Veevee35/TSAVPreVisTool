@@ -18,6 +18,10 @@ Runtime controls:
 
 Create a clean Windows package with `Build/Package-TSAVPreVis.ps1`. It defaults to Shipping, cooks only the application map, and filters editor/Codex authoring plugins out of the cook.
 
+## Camera and video switcher editor tools
+
+Open **Tools > TSAV Camera Tool** in Unreal Editor to create a production camera from the current editor view, select or snap existing cameras, and configure camera type, lens, render output, PTZ preview, and optional VISCA-over-IP control. Open **Tools > TSAV Video Switcher** to create or select a switcher, discover current level cameras, Media Source assets, and visible NDI senders, and route them directly to Program, Preview, Aux 1, or Aux 2. The switcher panel also provides Cut, Auto, actor properties, and an optional manual stream/NDI source field.
+
 ## LED and NDI builder
 
 The project includes reusable **TSAV LED Panel Definition**, **TSAV LED Panel**, and **TSAV LED Wall Builder** types in the `TSAVLEDTools` plugin. Open **Tools > TSAV LED Wall Builder** for the guided panel, wall, canvas, and NDI workflow. Open `/Game/TSAV/Levels/LED_Canvas_Configurator` for a ready-made level containing a center LED wall, two standalone panels, lighting, a floor, and a preview camera.
