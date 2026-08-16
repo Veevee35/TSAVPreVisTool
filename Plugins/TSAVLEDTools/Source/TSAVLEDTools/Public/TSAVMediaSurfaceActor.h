@@ -26,6 +26,7 @@ enum class ETSAVLEDSubpixelLayout : uint8
 	None UMETA(DisplayName = "Off (Solid Video)"),
 	RectangleRGB UMETA(DisplayName = "Rectangle RGB"),
 	RoundRGB UMETA(DisplayName = "Round RGB"),
+	RoundLinear UMETA(DisplayName = "Round Linear"),
 };
 
 /**
@@ -194,6 +195,9 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UTexture> DefaultRoundSubpixelTexture;
+
+	UPROPERTY()
+	TObjectPtr<UTexture> DefaultRoundLinearSubpixelTexture;
 
 private:
 	UFUNCTION()

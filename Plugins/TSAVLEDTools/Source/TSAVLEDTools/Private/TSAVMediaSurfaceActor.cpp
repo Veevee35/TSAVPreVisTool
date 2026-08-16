@@ -27,6 +27,7 @@ namespace TSAVLEDTools::Private
 	const TCHAR* DefaultFrameMaterialPath = TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasFrame.M_TSAV_LEDCanvasFrame");
 	const TCHAR* RectangleSubpixelTexturePath = TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RectangleRGB.T_TSAV_Subpixel_RectangleRGB");
 	const TCHAR* RoundSubpixelTexturePath = TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RoundRGB.T_TSAV_Subpixel_RoundRGB");
+	const TCHAR* RoundLinearSubpixelTexturePath = TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RoundLinear.T_TSAV_Subpixel_RoundLinear");
 }
 
 ATSAVMediaSurfaceActor::ATSAVMediaSurfaceActor()
@@ -45,10 +46,12 @@ ATSAVMediaSurfaceActor::ATSAVMediaSurfaceActor()
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> FrameMaterialAsset(TSAVLEDTools::Private::DefaultFrameMaterialPath);
 	static ConstructorHelpers::FObjectFinder<UTexture> RectangleSubpixelAsset(TSAVLEDTools::Private::RectangleSubpixelTexturePath);
 	static ConstructorHelpers::FObjectFinder<UTexture> RoundSubpixelAsset(TSAVLEDTools::Private::RoundSubpixelTexturePath);
+	static ConstructorHelpers::FObjectFinder<UTexture> RoundLinearSubpixelAsset(TSAVLEDTools::Private::RoundLinearSubpixelTexturePath);
 	if (DisplayMaterialAsset.Succeeded()) { DisplayMaterial = DisplayMaterialAsset.Object; }
 	if (FrameMaterialAsset.Succeeded()) { FrameMaterial = FrameMaterialAsset.Object; }
 	if (RectangleSubpixelAsset.Succeeded()) { DefaultRectangleSubpixelTexture = RectangleSubpixelAsset.Object; }
 	if (RoundSubpixelAsset.Succeeded()) { DefaultRoundSubpixelTexture = RoundSubpixelAsset.Object; }
+	if (RoundLinearSubpixelAsset.Succeeded()) { DefaultRoundLinearSubpixelTexture = RoundLinearSubpixelAsset.Object; }
 }
 
 void ATSAVMediaSurfaceActor::BeginPlay()
@@ -328,9 +331,15 @@ void ATSAVMediaSurfaceActor::ApplyDisplayMaterial()
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("SurfaceResolutionX"), static_cast<float>(SurfaceResolution.X));
 	DisplayMaterialInstance->SetScalarParameterValue(TEXT("SurfaceResolutionY"), static_cast<float>(SurfaceResolution.Y));
 
-	UTexture* SubpixelTexture = SubpixelLayout == ETSAVLEDSubpixelLayout::RoundRGB
-		? DefaultRoundSubpixelTexture.Get()
-		: DefaultRectangleSubpixelTexture.Get();
+	UTexture* SubpixelTexture = DefaultRectangleSubpixelTexture.Get();
+	if (SubpixelLayout == ETSAVLEDSubpixelLayout::RoundRGB)
+	{
+		SubpixelTexture = DefaultRoundSubpixelTexture.Get();
+	}
+	else if (SubpixelLayout == ETSAVLEDSubpixelLayout::RoundLinear)
+	{
+		SubpixelTexture = DefaultRoundLinearSubpixelTexture.Get();
+	}
 	if (SubpixelTexture)
 	{
 		DisplayMaterialInstance->SetTextureParameterValue(TEXT("SubpixelTexture"), SubpixelTexture);
@@ -398,6 +407,8 @@ FString ATSAVMediaSurfaceActor::CaptureTSAVState() const
 	Root->SetBoolField(TEXT("autoPlay"), bAutoPlay);
 	Root->SetBoolField(TEXT("loop"), bLoop);
 	Root->SetNumberField(TEXT("emissive"), EmissiveStrength);
+	Root->SetNumberField(TEXT("subpixelLayout"), static_cast<uint8>(SubpixelLayout));
+	Root->SetNumberField(TEXT("subpixelStrength"), SubpixelStrength);
 	Root->SetNumberField(TEXT("canvasWidth"), CanvasResolution.X);
 	Root->SetNumberField(TEXT("canvasHeight"), CanvasResolution.Y);
 	Root->SetNumberField(TEXT("canvasX"), CanvasPosition.X);
@@ -423,6 +434,17 @@ bool ATSAVMediaSurfaceActor::RestoreTSAVState(const FString& State)
 	bAutoPlay = Root->GetBoolField(TEXT("autoPlay"));
 	bLoop = Root->GetBoolField(TEXT("loop"));
 	EmissiveStrength = Root->GetNumberField(TEXT("emissive"));
+	double SubpixelLayoutValue = static_cast<uint8>(SubpixelLayout);
+	if (Root->TryGetNumberField(TEXT("subpixelLayout"), SubpixelLayoutValue))
+	{
+		SubpixelLayout = static_cast<ETSAVLEDSubpixelLayout>(FMath::Clamp(
+			FMath::RoundToInt(SubpixelLayoutValue), 0, static_cast<int32>(ETSAVLEDSubpixelLayout::RoundLinear)));
+	}
+	double SubpixelStrengthValue = SubpixelStrength;
+	if (Root->TryGetNumberField(TEXT("subpixelStrength"), SubpixelStrengthValue))
+	{
+		SubpixelStrength = FMath::Clamp(static_cast<float>(SubpixelStrengthValue), 0.0f, 1.0f);
+	}
 	CanvasResolution.X = Root->GetIntegerField(TEXT("canvasWidth"));
 	CanvasResolution.Y = Root->GetIntegerField(TEXT("canvasHeight"));
 	CanvasPosition.X = Root->GetIntegerField(TEXT("canvasX"));

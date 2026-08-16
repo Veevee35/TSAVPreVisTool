@@ -478,6 +478,7 @@ void UTSAVLEDWallConfiguratorWidget::BuildLayout()
 	SubpixelCombo->AddOption(TEXT("Off (Solid Video)"));
 	SubpixelCombo->AddOption(TEXT("Rectangle RGB"));
 	SubpixelCombo->AddOption(TEXT("Round RGB"));
+	SubpixelCombo->AddOption(TEXT("Round Linear"));
 	SubpixelCombo->SetSelectedIndex(0);
 	AddVertical(*Right, *CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "LEDSubpixel", "Subpixel layout"), 9, MutedTextColor), FMargin(0.0f, 5.0f, 0.0f, 2.0f));
 	AddVertical(*Right, *SubpixelCombo);
@@ -674,7 +675,7 @@ void UTSAVLEDWallConfiguratorWidget::ApplyFieldsToWall(ATSAVLEDWall& Wall)
 	Wall.CanvasPosition = FIntPoint(FMath::Max(GetIntField(CanvasX, 0), 0), FMath::Max(GetIntField(CanvasY, 0), 0));
 	Wall.bUseCanvasMapping = true;
 	Wall.EmissiveStrength = FMath::Max(GetFloatField(EmissiveStrength, Wall.EmissiveStrength), 0.0f);
-	Wall.SubpixelLayout = static_cast<ETSAVLEDSubpixelLayout>(FMath::Clamp(SubpixelCombo ? SubpixelCombo->GetSelectedIndex() : 0, 0, 2));
+	Wall.SubpixelLayout = static_cast<ETSAVLEDSubpixelLayout>(FMath::Clamp(SubpixelCombo ? SubpixelCombo->GetSelectedIndex() : 0, 0, 3));
 	Wall.SubpixelStrength = FMath::Clamp(GetFloatField(SubpixelStrength, Wall.SubpixelStrength), 0.0f, 1.0f);
 	Wall.bAutoPlay = AutoPlayCheck && AutoPlayCheck->IsChecked();
 

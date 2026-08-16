@@ -1,6 +1,6 @@
 """Import TSAV RGB subpixel masks and rebuild the LED canvas material.
 
-This script only owns the two subpixel textures and M_TSAV_LEDCanvasVideo. It
+This script only owns the subpixel textures and M_TSAV_LEDCanvasVideo. It
 does not modify levels or actors, so it is safe to rerun when the masks change.
 """
 
@@ -15,6 +15,7 @@ VIDEO_MATERIAL = f"{MATERIAL_PATH}/M_TSAV_LEDCanvasVideo"
 SUBPIXEL_PATH = "/TSAVLEDTools/Subpixels"
 RECTANGLE_TEXTURE = f"{SUBPIXEL_PATH}/T_TSAV_Subpixel_RectangleRGB"
 ROUND_TEXTURE = f"{SUBPIXEL_PATH}/T_TSAV_Subpixel_RoundRGB"
+ROUND_LINEAR_TEXTURE = f"{SUBPIXEL_PATH}/T_TSAV_Subpixel_RoundLinear"
 
 
 def _plugin_source_path(filename):
@@ -117,6 +118,7 @@ def build_assets():
     unreal.EditorAssetLibrary.make_directory(SUBPIXEL_PATH)
     rectangle = _import_texture("Rectangle Subpixel.png", RECTANGLE_TEXTURE)
     round_rgb = _import_texture("Round Subpixel.png", ROUND_TEXTURE)
+    round_linear = _import_texture("Round Linear Subpixel.png", ROUND_LINEAR_TEXTURE)
 
     material = _create_or_load_material(VIDEO_MATERIAL)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
@@ -250,9 +252,10 @@ def build_assets():
     unreal.EditorAssetLibrary.save_loaded_asset(material, only_if_is_dirty=False)
     unreal.log(
         "CODEX_LED_SUBPIXEL_SUCCESS "
-        f"material={VIDEO_MATERIAL} rectangle={RECTANGLE_TEXTURE} round={ROUND_TEXTURE}"
+        f"material={VIDEO_MATERIAL} rectangle={RECTANGLE_TEXTURE} round={ROUND_TEXTURE} "
+        f"round_linear={ROUND_LINEAR_TEXTURE}"
     )
-    return material, rectangle, round_rgb
+    return material, rectangle, round_rgb, round_linear
 
 
 def main():

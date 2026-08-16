@@ -22,5 +22,7 @@ public class TSAVLEDTools : ModuleRules
 				"ProceduralMeshComponent",
 			}
 		);
+
+		PrivateDependencyModuleNames.Add("MediaIOCore");
 	}
 }

@@ -1323,6 +1323,14 @@ void STSAVLEDWallBuilder::Construct(const FArguments& InArgs)
 						.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { if (State == ECheckBoxState::Checked) SubpixelLayout = ETSAVLEDSubpixelLayout::RoundRGB; })
 						[SNew(STextBlock).Text(LOCTEXT("RoundSubpixel", "Round RGB"))]
 					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(18.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SCheckBox)
+						.Style(FAppStyle::Get(), TEXT("RadioButton"))
+						.IsChecked_Lambda([this]() { return SubpixelLayout == ETSAVLEDSubpixelLayout::RoundLinear ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+						.OnCheckStateChanged_Lambda([this](ECheckBoxState State) { if (State == ECheckBoxState::Checked) SubpixelLayout = ETSAVLEDSubpixelLayout::RoundLinear; })
+						[SNew(STextBlock).Text(LOCTEXT("RoundLinearSubpixel", "Round Linear"))]
+					]
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 14.0f)
 				[

@@ -902,11 +902,11 @@ void UTSAVMainWidget::BuildContextTools(AActor* SelectedActor)
 				ActionSlot->SetPadding(FMargin(1.0f));
 			}
 		};
-		AddAction(NSLOCTEXT("TSAVPreVis", "DiscoverVideoSources", "Discover"), GET_FUNCTION_NAME_CHECKED(UTSAVMainWidget, SwitcherDiscoverClicked));
+		AddAction(NSLOCTEXT("TSAVPreVis", "DiscoverVideoSources", "Refresh Inputs"), GET_FUNCTION_NAME_CHECKED(UTSAVMainWidget, SwitcherDiscoverClicked));
 		AddAction(NSLOCTEXT("TSAVPreVis", "CutVideo", "CUT"), GET_FUNCTION_NAME_CHECKED(UTSAVMainWidget, SwitcherCutClicked));
 		AddAction(NSLOCTEXT("TSAVPreVis", "AutoVideo", "AUTO"), GET_FUNCTION_NAME_CHECKED(UTSAVMainWidget, SwitcherAutoClicked));
 
-		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "SwitcherInputs", "INPUT CROSSPOINTS"), 10, MutedTextColor));
+		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "SwitcherInputs", "VISIBLE INPUTS (CAMERA / MEDIA / NDI)"), 10, MutedTextColor));
 		for (const FTSAVVideoInput& Input : ContextSwitcher->Inputs)
 		{
 			if (UVerticalBoxSlot* InputLabelSlot = ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, Input.Label, 10, PrimaryTextColor)))
@@ -933,9 +933,9 @@ void UTSAVMainWidget::BuildContextTools(AActor* SelectedActor)
 			}
 		}
 
-		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "AddStreamInputHeader", "ADD URL / NDI INPUT"), 10, MutedTextColor));
+		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "AddStreamInputHeader", "MANUAL STREAM URL (OPTIONAL)"), 10, MutedTextColor));
 		SwitcherInputNameField = CreateEditField(*WidgetTree, NSLOCTEXT("TSAVPreVis", "InputNameHint", "Input name"));
-		SwitcherInputUrlField = CreateEditField(*WidgetTree, NSLOCTEXT("TSAVPreVis", "InputUrlHint", "Stream or NDI URL"));
+		SwitcherInputUrlField = CreateEditField(*WidgetTree, NSLOCTEXT("TSAVPreVis", "InputUrlHint", "Stream URL or bare NDI source name"));
 		ContextToolPanel->AddChildToVerticalBox(SwitcherInputNameField);
 		ContextToolPanel->AddChildToVerticalBox(SwitcherInputUrlField);
 		UButton* AddUrl = CreateModeButton(*WidgetTree, NSLOCTEXT("TSAVPreVis", "AddInputButton", "Add Input"));
@@ -999,6 +999,7 @@ void UTSAVMainWidget::BuildContextTools(AActor* SelectedActor)
 		LEDSubpixelCombo->AddOption(TEXT("Off (Solid Video)"));
 		LEDSubpixelCombo->AddOption(TEXT("Rectangle RGB"));
 		LEDSubpixelCombo->AddOption(TEXT("Round RGB"));
+		LEDSubpixelCombo->AddOption(TEXT("Round Linear"));
 		LEDSubpixelCombo->SetSelectedIndex(static_cast<int32>(ContextLEDWall->SubpixelLayout));
 		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "LEDSubpixelLayout", "SUBPIXEL LAYOUT"), 10, MutedTextColor));
 		ContextToolPanel->AddChildToVerticalBox(LEDSubpixelCombo);
@@ -1226,7 +1227,7 @@ void UTSAVMainWidget::LEDWallApplyConfigurationClicked()
 	ContextLEDWall->EmissiveStrength = FMath::Max(FloatAt(LEDEmissiveStrength, ContextLEDWall->EmissiveStrength), 0.0f);
 	ContextLEDWall->LinkPattern = LEDLinkPatternCombo && LEDLinkPatternCombo->GetSelectedIndex() == 0
 		? ETSAVLEDLinkPattern::RowsLeftToRight : ETSAVLEDLinkPattern::RowsSerpentine;
-	ContextLEDWall->SubpixelLayout = static_cast<ETSAVLEDSubpixelLayout>(FMath::Clamp(LEDSubpixelCombo ? LEDSubpixelCombo->GetSelectedIndex() : 0, 0, 2));
+	ContextLEDWall->SubpixelLayout = static_cast<ETSAVLEDSubpixelLayout>(FMath::Clamp(LEDSubpixelCombo ? LEDSubpixelCombo->GetSelectedIndex() : 0, 0, 3));
 
 	ContextLEDWall->PanelEdgeStyles.Init(ETSAVLEDPanelEdgeStyle::Square, ContextLEDWall->Columns * ContextLEDWall->Rows);
 	for (int32 Row = 0; Row < FMath::Min(OldRows, ContextLEDWall->Rows); ++Row)

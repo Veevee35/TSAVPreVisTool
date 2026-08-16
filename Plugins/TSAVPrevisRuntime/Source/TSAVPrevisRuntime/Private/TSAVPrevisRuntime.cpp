@@ -146,6 +146,14 @@ namespace TSAVPhase2Validation::Private
 			World, ATSAVVideoSwitcher::StaticClass(), FTransform(FRotator::ZeroRotator, FVector(200.0f, 0.0f, 100.0f)),
 			FText::FromString(TEXT("Validation Switcher")), ETSAVObjectType::Video));
 		if (!Require(Switcher != nullptr, TEXT("Video switcher spawn failed"))) { return; }
+		const FGuid NormalizedNDIInputId = Switcher->AddStreamInput(FText::FromString(TEXT("NDI Validation")), TEXT("TSAV Validation Sender"));
+		const FTSAVVideoInput* NormalizedNDIInput = Switcher->Inputs.FindByPredicate([NormalizedNDIInputId](const FTSAVVideoInput& Input)
+		{
+			return Input.InputId == NormalizedNDIInputId;
+		});
+		if (!Require(NormalizedNDIInput && NormalizedNDIInput->StreamUrl == TEXT("ndi://TSAV Validation Sender"),
+			TEXT("Bare NDI source name normalization failed"))) { return; }
+		Switcher->RemoveInput(NormalizedNDIInputId);
 		Switcher->DiscoverSources();
 		const FTSAVVideoInput* CameraOneInput = Switcher->Inputs.FindByPredicate([CameraOne](const FTSAVVideoInput& Input) { return Input.ProviderId == CameraOne->CameraId; });
 		const FTSAVVideoInput* CameraTwoInput = Switcher->Inputs.FindByPredicate([CameraTwo](const FTSAVVideoInput& Input) { return Input.ProviderId == CameraTwo->CameraId; });
@@ -166,6 +174,8 @@ namespace TSAVPhase2Validation::Private
 		RoutedWall->ColumnInternalCurveEnabled = { false, false, true, false, false };
 		RoutedWall->ColumnInternalCurveAngleADegrees = { 0.0f, 0.0f, 30.0f, 0.0f, 0.0f };
 		RoutedWall->ColumnInternalCurveAngleBDegrees = { 0.0f, 0.0f, 30.0f, 0.0f, 0.0f };
+		RoutedWall->SubpixelLayout = ETSAVLEDSubpixelLayout::RoundLinear;
+		RoutedWall->SubpixelStrength = 0.85f;
 		RoutedWall->PanelEdgeStyles.Init(ETSAVLEDPanelEdgeStyle::Square, RoutedWall->Columns * RoutedWall->Rows);
 		RoutedWall->PanelEdgeStyles[0] = ETSAVLEDPanelEdgeStyle::DiagonalTopLeft;
 		RoutedWall->RebuildPanelLayout();
@@ -187,6 +197,8 @@ namespace TSAVPhase2Validation::Private
 			TEXT("Packaged LED video material missing"))) { return; }
 		if (!Require(LoadObject<UTexture>(nullptr, TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RectangleRGB.T_TSAV_Subpixel_RectangleRGB")) != nullptr,
 			TEXT("Packaged LED subpixel texture missing"))) { return; }
+		if (!Require(LoadObject<UTexture>(nullptr, TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RoundLinear.T_TSAV_Subpixel_RoundLinear")) != nullptr,
+			TEXT("Packaged Round Linear subpixel texture missing"))) { return; }
 		RoutedWall->SetVideoRoute(Switcher, TEXT("Program"));
 		if (!Require(RoutedWall->GetDisplayedVideoTexture() == CameraTwo->GetTSAVVideoTexture(), TEXT("LED shader did not bind routed camera texture"))) { return; }
 		const FString SwitcherBeforeCut = Switcher->CaptureTSAVState();
@@ -199,7 +211,8 @@ namespace TSAVPhase2Validation::Private
 		Commands->Redo();
 		const FGuid SwitcherObjectId = Switcher->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
 
-		const FString ValidationPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Automation"), TEXT("Phase2Validation.tsav"));
+		const FString ValidationPath = FPaths::ConvertRelativePathToFull(
+			FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Automation"), TEXT("Phase2Validation.tsav")));
 		if (!Require(Project->SaveProject(ValidationPath), TEXT(".tsav save failed"))) { return; }
 		Actor->SetActorLocation(FVector(9999.0f));
 		if (!Require(Project->LoadProject(ValidationPath), TEXT(".tsav load failed"))) { return; }
@@ -219,7 +232,8 @@ namespace TSAVPhase2Validation::Private
 		if (!Require(CameraTwo->CameraType == ETSAVCameraType::PTZ && FMath::IsNearlyEqual(CameraTwo->ZoomNormalized, 0.45f), TEXT("Persistent camera configuration failed"))) { return; }
 		if (!Require(RoutedWall->bUseVideoSwitcher && RoutedWall->GetVideoSwitcher() == Switcher, TEXT("Persistent surface route failed"))) { return; }
 		if (!Require(RoutedWall->Columns == 5 && RoutedWall->Rows == 3 && RoutedWall->ColumnInternalCurveEnabled.IsValidIndex(2) &&
-			RoutedWall->ColumnInternalCurveEnabled[2] && RoutedWall->GetPanelEdgeStyle(0, 0) == ETSAVLEDPanelEdgeStyle::DiagonalTopLeft,
+			RoutedWall->ColumnInternalCurveEnabled[2] && RoutedWall->GetPanelEdgeStyle(0, 0) == ETSAVLEDPanelEdgeStyle::DiagonalTopLeft &&
+			RoutedWall->SubpixelLayout == ETSAVLEDSubpixelLayout::RoundLinear && FMath::IsNearlyEqual(RoutedWall->SubpixelStrength, 0.85f),
 			TEXT("Persistent LED configurator state failed"))) { return; }
 		if (!Require(Switcher->GetOutputTexture(TEXT("Program")) == CameraOne->GetTSAVVideoTexture(), TEXT("Persistent switcher bus failed"))) { return; }
 		if (!Require(RoutedWall->GetDisplayedVideoTexture() == CameraOne->GetTSAVVideoTexture(), TEXT("Persistent LED video texture binding failed"))) { return; }

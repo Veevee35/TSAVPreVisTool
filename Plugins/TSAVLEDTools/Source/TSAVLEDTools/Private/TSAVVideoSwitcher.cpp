@@ -8,7 +8,10 @@
 #include "Dom/JsonObject.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "IMediaIOCoreDeviceProvider.h"
+#include "IMediaIOCoreModule.h"
 #include "MediaSource.h"
+#include "Modules/ModuleManager.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -20,10 +23,22 @@
 
 namespace TSAVVideoSwitcher::Private
 {
+	const FName NDIProviderName(TEXT("NDI"));
+
 	FGuid ParseGuid(const FString& Value)
 	{
 		FGuid Result;
 		FGuid::Parse(Value, Result);
+		return Result;
+	}
+
+	FString NormalizeStreamUrl(const FString& Value)
+	{
+		FString Result = Value.TrimStartAndEnd();
+		if (!Result.IsEmpty() && !Result.Contains(TEXT("://")))
+		{
+			Result = FString::Printf(TEXT("ndi://%s"), *Result);
+		}
 		return Result;
 	}
 }
@@ -142,6 +157,42 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 		++Added;
 	}
 
+	// NDIMedia exposes current network senders through MediaIOCore. Their full
+	// NDI names are durable endpoints, so storing ndi://<name> lets saved .tsav
+	// projects reconnect automatically when a sender returns.
+	FModuleManager::LoadModulePtr<IModuleInterface>(TEXT("NDIMedia"));
+	if (IMediaIOCoreModule::IsAvailable())
+	{
+		if (IMediaIOCoreDeviceProvider* NDIProvider = IMediaIOCoreModule::Get().GetDeviceProvider(TSAVVideoSwitcher::Private::NDIProviderName))
+		{
+			TArray<FMediaIODevice> NDIDevices = NDIProvider->GetDevices();
+			NDIDevices.Sort([](const FMediaIODevice& Left, const FMediaIODevice& Right)
+			{
+				return Left.DeviceName.LexicalLess(Right.DeviceName);
+			});
+			for (const FMediaIODevice& Device : NDIDevices)
+			{
+				const FString SourceName = Device.DeviceName.ToString().TrimStartAndEnd();
+				const FString SourceUrl = TSAVVideoSwitcher::Private::NormalizeStreamUrl(SourceName);
+				if (SourceName.IsEmpty() || Inputs.ContainsByPredicate([&SourceUrl](const FTSAVVideoInput& Input)
+				{
+					return Input.Kind == ETSAVVideoInputKind::StreamUrl && Input.StreamUrl.Equals(SourceUrl, ESearchCase::IgnoreCase);
+				}))
+				{
+					continue;
+				}
+
+				FTSAVVideoInput& Input = Inputs.AddDefaulted_GetRef();
+				Input.InputId = FGuid::NewGuid();
+				Input.Label = FText::Format(NSLOCTEXT("TSAVVideo", "VisibleNDIInput", "NDI  |  {0}"), FText::FromString(SourceName));
+				Input.Kind = ETSAVVideoInputKind::StreamUrl;
+				Input.StreamUrl = SourceUrl;
+				ResolveMediaSource(Input);
+				++Added;
+			}
+		}
+	}
+
 	if (Added > 0)
 	{
 		if (FTSAVVideoBus* Program = FindBus(TEXT("Program")); Program && !Program->SelectedInputId.IsValid() && !Inputs.IsEmpty())
@@ -161,15 +212,16 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 
 FGuid ATSAVVideoSwitcher::AddStreamInput(const FText& Label, const FString& StreamUrl)
 {
-	if (StreamUrl.IsEmpty())
+	const FString ResolvedUrl = TSAVVideoSwitcher::Private::NormalizeStreamUrl(StreamUrl);
+	if (ResolvedUrl.IsEmpty())
 	{
 		return FGuid();
 	}
 	FTSAVVideoInput& Input = Inputs.AddDefaulted_GetRef();
 	Input.InputId = FGuid::NewGuid();
-	Input.Label = Label.IsEmpty() ? FText::FromString(StreamUrl) : Label;
+	Input.Label = Label.IsEmpty() ? FText::FromString(ResolvedUrl) : Label;
 	Input.Kind = ETSAVVideoInputKind::StreamUrl;
-	Input.StreamUrl = StreamUrl;
+	Input.StreamUrl = ResolvedUrl;
 	ResolveMediaSource(Input);
 	OnInputsChanged.Broadcast();
 	return Input.InputId;
@@ -376,7 +428,9 @@ bool ATSAVVideoSwitcher::RestoreTSAVState(const FString& State)
 			Input.Kind = static_cast<ETSAVVideoInputKind>(Json->GetIntegerField(TEXT("kind")));
 			const FString SourcePath = Json->GetStringField(TEXT("mediaSource"));
 			Input.MediaSource = SourcePath.IsEmpty() ? nullptr : LoadObject<UMediaSource>(nullptr, *SourcePath);
-			Input.StreamUrl = Json->GetStringField(TEXT("streamUrl"));
+			Input.StreamUrl = Input.Kind == ETSAVVideoInputKind::StreamUrl
+				? TSAVVideoSwitcher::Private::NormalizeStreamUrl(Json->GetStringField(TEXT("streamUrl")))
+				: Json->GetStringField(TEXT("streamUrl"));
 			Input.ProviderId = TSAVVideoSwitcher::Private::ParseGuid(Json->GetStringField(TEXT("providerId")));
 		}
 	}
