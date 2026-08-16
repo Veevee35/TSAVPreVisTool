@@ -54,6 +54,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Commands")
 	bool SetVisible(AActor* Actor, bool bVisible);
 
+	/** Store an actor-specific state change that has already been applied by a tool. */
+	bool CommitAppliedActorState(AActor* Actor, const FString& BeforeState, const FText& Description);
+
 	/** Begin/end collapse a live gizmo drag into one transform command. */
 	void BeginTransformTransaction(AActor* Actor);
 	void UpdateTransformTransaction(AActor* Actor, const FTransform& NewTransform);

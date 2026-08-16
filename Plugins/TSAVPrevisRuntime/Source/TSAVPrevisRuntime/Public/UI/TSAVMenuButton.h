@@ -29,6 +29,7 @@ enum class ETSAVMenuAction : uint8
 	AddSpotLight,
 	AddRectLight,
 	AddVideoSurface,
+	AddVideoSwitcher,
 	AddCamera,
 	SelectView,
 	WalkthroughView,

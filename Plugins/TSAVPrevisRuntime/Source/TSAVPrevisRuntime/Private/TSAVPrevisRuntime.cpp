@@ -5,16 +5,20 @@
 #include "Engine/GameInstance.h"
 #include "Engine/Engine.h"
 #include "Engine/PointLight.h"
+#include "Engine/Texture.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
 #include "Interaction/TSAVCommandSubsystem.h"
 #include "Interaction/TSAVSceneObjectComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
 #include "Misc/CoreDelegates.h"
 #include "Containers/Ticker.h"
 #include "Project/TSAVProjectSubsystem.h"
 #include "TSAVLEDWall.h"
+#include "TSAVVideoSwitcher.h"
+#include "Video/TSAVCameraActor.h"
 
 #define LOCTEXT_NAMESPACE "FTSAVPrevisRuntimeModule"
 
@@ -120,6 +124,67 @@ namespace TSAVPhase2Validation::Private
 		Commands->Redo();
 		if (!Require(FindById(World, LightId) != nullptr, TEXT("Generic actor redo failed"))) { return; }
 
+		ATSAVCameraActor* CameraOne = Cast<ATSAVCameraActor>(Commands->SpawnActorClass(
+			World, ATSAVCameraActor::StaticClass(), FTransform(FRotator::ZeroRotator, FVector(0.0f, -300.0f, 200.0f)),
+			FText::FromString(TEXT("CAM 1")), ETSAVObjectType::Camera));
+		ATSAVCameraActor* CameraTwo = Cast<ATSAVCameraActor>(Commands->SpawnActorClass(
+			World, ATSAVCameraActor::StaticClass(), FTransform(FRotator::ZeroRotator, FVector(0.0f, 300.0f, 200.0f)),
+			FText::FromString(TEXT("CAM 2")), ETSAVObjectType::Camera));
+		if (!Require(CameraOne && CameraTwo, TEXT("Production camera spawn failed"))) { return; }
+		const FString CameraTwoBefore = CameraTwo->CaptureTSAVState();
+		CameraTwo->CameraLabel = FText::FromString(TEXT("CAM 2"));
+		CameraTwo->SetCameraType(ETSAVCameraType::PTZ);
+		CameraTwo->SetLensPreset(ETSAVLensPreset::PTZZoom);
+		CameraTwo->ApplyPTZ(25.0f, 10.0f, 0.45f, false);
+		Commands->CommitAppliedActorState(CameraTwo, CameraTwoBefore, FText::FromString(TEXT("Configure Validation Camera")));
+		const FGuid CameraOneObjectId = CameraOne->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
+		const FGuid CameraTwoObjectId = CameraTwo->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
+
+		ATSAVVideoSwitcher* Switcher = Cast<ATSAVVideoSwitcher>(Commands->SpawnActorClass(
+			World, ATSAVVideoSwitcher::StaticClass(), FTransform(FRotator::ZeroRotator, FVector(200.0f, 0.0f, 100.0f)),
+			FText::FromString(TEXT("Validation Switcher")), ETSAVObjectType::Video));
+		if (!Require(Switcher != nullptr, TEXT("Video switcher spawn failed"))) { return; }
+		Switcher->DiscoverSources();
+		const FTSAVVideoInput* CameraOneInput = Switcher->Inputs.FindByPredicate([CameraOne](const FTSAVVideoInput& Input) { return Input.ProviderId == CameraOne->CameraId; });
+		const FTSAVVideoInput* CameraTwoInput = Switcher->Inputs.FindByPredicate([CameraTwo](const FTSAVVideoInput& Input) { return Input.ProviderId == CameraTwo->CameraId; });
+		if (!Require(CameraOneInput && CameraTwoInput, TEXT("Camera feed discovery failed"))) { return; }
+		const FGuid CameraOneInputId = CameraOneInput->InputId;
+		const FGuid CameraTwoInputId = CameraTwoInput->InputId;
+		Switcher->SetBusInput(TEXT("Preview"), CameraOneInputId);
+		Switcher->SetBusInput(TEXT("Program"), CameraTwoInputId);
+		if (!Require(Switcher->GetOutputTexture(TEXT("Program")) == CameraTwo->GetTSAVVideoTexture(), TEXT("Switcher camera route failed"))) { return; }
+		ATSAVLEDWall* RoutedWall = Cast<ATSAVLEDWall>(LEDWall);
+		const FString WallBefore = RoutedWall->CaptureTSAVState();
+		RoutedWall->Columns = 5;
+		RoutedWall->Rows = 3;
+		RoutedWall->PanelResolutionX = 160;
+		RoutedWall->PanelResolutionY = 120;
+		RoutedWall->ColumnSeamAnglesDegrees = { 0.0f, 15.0f, 15.0f, 0.0f };
+		RoutedWall->RowSeamAnglesDegrees = { 0.0f, -5.0f };
+		RoutedWall->ColumnInternalCurveEnabled = { false, false, true, false, false };
+		RoutedWall->ColumnInternalCurveAngleADegrees = { 0.0f, 0.0f, 30.0f, 0.0f, 0.0f };
+		RoutedWall->ColumnInternalCurveAngleBDegrees = { 0.0f, 0.0f, 30.0f, 0.0f, 0.0f };
+		RoutedWall->PanelEdgeStyles.Init(ETSAVLEDPanelEdgeStyle::Square, RoutedWall->Columns * RoutedWall->Rows);
+		RoutedWall->PanelEdgeStyles[0] = ETSAVLEDPanelEdgeStyle::DiagonalTopLeft;
+		RoutedWall->RebuildPanelLayout();
+		Commands->CommitAppliedActorState(RoutedWall, WallBefore, FText::FromString(TEXT("Configure Validation LED Wall")));
+		if (!Require(RoutedWall->GetWallResolutionPixels() == FIntPoint(800, 360), TEXT("Runtime LED configurator failed"))) { return; }
+		if (!Require(LoadObject<UMaterialInterface>(nullptr, TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasVideo.M_TSAV_LEDCanvasVideo")) != nullptr,
+			TEXT("Packaged LED video material missing"))) { return; }
+		if (!Require(LoadObject<UTexture>(nullptr, TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RectangleRGB.T_TSAV_Subpixel_RectangleRGB")) != nullptr,
+			TEXT("Packaged LED subpixel texture missing"))) { return; }
+		RoutedWall->SetVideoRoute(Switcher, TEXT("Program"));
+		if (!Require(RoutedWall->GetDisplayedVideoTexture() == CameraTwo->GetTSAVVideoTexture(), TEXT("LED shader did not bind routed camera texture"))) { return; }
+		const FString SwitcherBeforeCut = Switcher->CaptureTSAVState();
+		Switcher->Cut();
+		Commands->CommitAppliedActorState(Switcher, SwitcherBeforeCut, FText::FromString(TEXT("Validation Switcher Cut")));
+		if (!Require(Switcher->GetBusInputId(TEXT("Program")) == CameraOneInputId, TEXT("Switcher cut failed"))) { return; }
+		if (!Require(RoutedWall->GetDisplayedVideoTexture() == CameraOne->GetTSAVVideoTexture(), TEXT("LED texture did not follow Program cut"))) { return; }
+		Commands->Undo();
+		if (!Require(Switcher->GetBusInputId(TEXT("Program")) == CameraTwoInputId, TEXT("Switcher cut undo failed"))) { return; }
+		Commands->Redo();
+		const FGuid SwitcherObjectId = Switcher->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
+
 		const FString ValidationPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Automation"), TEXT("Phase2Validation.tsav"));
 		if (!Require(Project->SaveProject(ValidationPath), TEXT(".tsav save failed"))) { return; }
 		Actor->SetActorLocation(FVector(9999.0f));
@@ -132,8 +197,24 @@ namespace TSAVPhase2Validation::Private
 		if (!Require(FindById(World, DuplicateId) != nullptr, TEXT("Persistent duplicate restoration failed"))) { return; }
 		if (!Require(Cast<ATSAVLEDWall>(FindById(World, LEDWallId)) != nullptr, TEXT("Persistent LED wall restoration failed"))) { return; }
 		if (!Require(Cast<APointLight>(FindById(World, LightId)) != nullptr, TEXT("Persistent light restoration failed"))) { return; }
+		CameraOne = Cast<ATSAVCameraActor>(FindById(World, CameraOneObjectId));
+		CameraTwo = Cast<ATSAVCameraActor>(FindById(World, CameraTwoObjectId));
+		Switcher = Cast<ATSAVVideoSwitcher>(FindById(World, SwitcherObjectId));
+		RoutedWall = Cast<ATSAVLEDWall>(FindById(World, LEDWallId));
+		if (!Require(CameraOne && CameraTwo && Switcher && RoutedWall, TEXT("Persistent video tool restoration failed"))) { return; }
+		if (!Require(CameraTwo->CameraType == ETSAVCameraType::PTZ && FMath::IsNearlyEqual(CameraTwo->ZoomNormalized, 0.45f), TEXT("Persistent camera configuration failed"))) { return; }
+		if (!Require(RoutedWall->bUseVideoSwitcher && RoutedWall->GetVideoSwitcher() == Switcher, TEXT("Persistent surface route failed"))) { return; }
+		if (!Require(RoutedWall->Columns == 5 && RoutedWall->Rows == 3 && RoutedWall->ColumnInternalCurveEnabled.IsValidIndex(2) &&
+			RoutedWall->ColumnInternalCurveEnabled[2] && RoutedWall->GetPanelEdgeStyle(0, 0) == ETSAVLEDPanelEdgeStyle::DiagonalTopLeft,
+			TEXT("Persistent LED configurator state failed"))) { return; }
+		if (!Require(Switcher->GetOutputTexture(TEXT("Program")) == CameraOne->GetTSAVVideoTexture(), TEXT("Persistent switcher bus failed"))) { return; }
+		if (!Require(RoutedWall->GetDisplayedVideoTexture() == CameraOne->GetTSAVVideoTexture(), TEXT("Persistent LED video texture binding failed"))) { return; }
 
 		UE_LOG(LogTSAVPrevisRuntime, Display, TEXT("CODEX_TSAV_PHASE2_COMMAND_PERSISTENCE_SUCCESS path=%s"), *ValidationPath);
+		UE_LOG(LogTSAVPrevisRuntime, Display, TEXT("CODEX_TSAV_VIDEO_SWITCHER_CAMERA_VISCA_SUCCESS inputs=%d program=%s"),
+			Switcher->Inputs.Num(), *Switcher->GetBusInputLabel(TEXT("Program")).ToString());
+		UE_LOG(LogTSAVPrevisRuntime, Display, TEXT("CODEX_TSAV_LED_RUNTIME_CONFIGURATOR_VIDEO_SUCCESS columns=%d rows=%d texture=%s"),
+			RoutedWall->Columns, RoutedWall->Rows, *GetNameSafe(RoutedWall->GetDisplayedVideoTexture()));
 	}
 
 	FAutoConsoleCommandWithWorld ValidationCommand(

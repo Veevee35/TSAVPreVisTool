@@ -177,6 +177,10 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "TSAV LED|Topology")
 	void RebuildPanelLayout();
 
+	/** Persist the complete runtime configurator, not only the shared media route. */
+	virtual FString CaptureTSAVState() const override;
+	virtual bool RestoreTSAVState(const FString& State) override;
+
 	UFUNCTION(BlueprintPure, Category = "TSAV LED|Wall")
 	float GetWallWidthCm() const;
 

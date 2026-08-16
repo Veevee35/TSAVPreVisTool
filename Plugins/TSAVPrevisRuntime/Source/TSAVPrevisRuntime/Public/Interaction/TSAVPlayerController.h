@@ -29,6 +29,8 @@ public:
 	void SetTransformTool(ETSAVTransformMode NewMode);
 	void ToggleTransformCoordinateSpace();
 	void FrameSelection();
+	void ViewThroughCamera(AActor* CameraActor);
+	void ReturnToEditorCamera();
 
 protected:
 	virtual void BeginPlay() override;

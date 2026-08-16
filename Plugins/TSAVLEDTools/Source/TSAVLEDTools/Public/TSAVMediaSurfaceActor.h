@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TSAVStateSerializable.h"
 
 #include "TSAVMediaSurfaceActor.generated.h"
 
@@ -15,6 +16,8 @@ class UMediaSource;
 class UMediaTexture;
 class USceneComponent;
 class UStaticMeshComponent;
+class UTexture;
+class ATSAVVideoSwitcher;
 
 /** RGB emitter geometry repeated once per native LED pixel. */
 UENUM(BlueprintType)
@@ -33,7 +36,7 @@ enum class ETSAVLEDSubpixelLayout : uint8
  * the editor or let the actor open it automatically during play.
  */
 UCLASS(Abstract, Blueprintable)
-class TSAVLEDTOOLS_API ATSAVMediaSurfaceActor : public AActor
+class TSAVLEDTOOLS_API ATSAVMediaSurfaceActor : public AActor, public ITSAVStateSerializable
 {
 	GENERATED_BODY()
 
@@ -43,6 +46,20 @@ public:
 	/** Source shown on this LED surface. NDI Media Source assets are supported. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Media")
 	TObjectPtr<UMediaSource> MediaSource;
+
+	/** Follow a switcher bus instead of locking this surface to one preassigned source. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Media Routing")
+	bool bUseVideoSwitcher = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Media Routing", meta = (EditCondition = "bUseVideoSwitcher"))
+	TObjectPtr<ATSAVVideoSwitcher> VideoSwitcher;
+
+	/** Stable switcher identity used when loading .tsav projects. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TSAV LED|Media Routing")
+	FGuid VideoSwitcherId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Media Routing", meta = (EditCondition = "bUseVideoSwitcher"))
+	FName VideoBusName = TEXT("Program");
 
 	/** Open and play MediaSource automatically. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV LED|Media")
@@ -110,6 +127,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "TSAV LED|Media")
 	UMediaTexture* GetMediaTexture() const;
 
+	/** Texture currently bound to the LED shader after direct/switcher routing resolves. */
+	UFUNCTION(BlueprintPure, Category = "TSAV LED|Media")
+	UTexture* GetDisplayedVideoTexture() const { return DisplayedVideoTexture; }
+
+	UFUNCTION(BlueprintCallable, Category = "TSAV LED|Media Routing")
+	void SetVideoRoute(ATSAVVideoSwitcher* Switcher, FName BusName);
+
+	UFUNCTION(BlueprintCallable, Category = "TSAV LED|Media Routing")
+	void ClearVideoRoute();
+
+	UFUNCTION(BlueprintPure, Category = "TSAV LED|Media Routing")
+	ATSAVVideoSwitcher* GetVideoSwitcher() const { return VideoSwitcher; }
+
+	virtual FString CaptureTSAVState() const override;
+	virtual bool RestoreTSAVState(const FString& State) override;
+
 	/** Native pixel resolution calculated by the panel or wall configurator. */
 	UFUNCTION(BlueprintPure, Category = "TSAV LED|Canvas")
 	FIntPoint GetSurfaceResolutionPixels() const;
@@ -152,7 +185,23 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> DisplayMaterialInstance;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture> DisplayedVideoTexture;
+
+	/** Native hard references keep the runtime LED shader library in cooked builds. */
+	UPROPERTY()
+	TObjectPtr<UTexture> DefaultRectangleSubpixelTexture;
+
+	UPROPERTY()
+	TObjectPtr<UTexture> DefaultRoundSubpixelTexture;
+
 private:
+	UFUNCTION()
+	void HandleSwitcherBusChanged(FName BusName);
+
+	ATSAVVideoSwitcher* ResolveVideoSwitcher();
+	UMediaSource* ResolveActiveMediaSource();
+	UTexture* ResolveRoutedTexture();
 	void ApplyDisplayMaterial();
 	void UpdatePlayback(bool bForceReopen);
 	UMaterialInterface* ResolveDisplayMaterial() const;

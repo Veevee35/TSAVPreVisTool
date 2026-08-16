@@ -13,11 +13,14 @@ public class TSAVPrevisRuntime : ModuleRules
 			{
 				"Core",
 				"CoreUObject",
+				"CinematicCamera",
 				"Engine",
 				"EnhancedInput",
 				"InputCore",
 				"Json",
 				"JsonUtilities",
+				"Networking",
+				"Sockets",
 				"TSAVLEDTools",
 				"UMG",
 			}

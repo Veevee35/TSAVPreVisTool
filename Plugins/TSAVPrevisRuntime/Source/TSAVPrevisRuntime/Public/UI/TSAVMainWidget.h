@@ -11,9 +11,14 @@
 #include "TSAVMainWidget.generated.h"
 
 class AActor;
+class ATSAVCameraActor;
+class ATSAVLEDWall;
+class ATSAVMediaSurfaceActor;
+class ATSAVVideoSwitcher;
 class UBorder;
 class UCanvasPanel;
 class UCanvasPanelSlot;
+class UComboBoxString;
 class UEditableTextBox;
 class UScrollBox;
 class UTextBlock;
@@ -49,6 +54,9 @@ private:
 	void UpdateInspector(AActor* SelectedActor);
 	void RefreshOutliner();
 	void RefreshProjectStatus();
+	void BuildContextTools(AActor* SelectedActor);
+	void CommitContextState(AActor* Actor, const FString& BeforeState, const FText& Description);
+	void RouteContextSurface(FName BusName);
 	void CommitTransformValue(int32 GroupIndex, int32 AxisIndex, const FText& Text);
 	void ToggleMenu(ETSAVTopMenu Menu, float LeftPosition);
 	void HideMenu();
@@ -102,6 +110,84 @@ private:
 
 	UFUNCTION()
 	void ViewMenuClicked();
+
+	UFUNCTION()
+	void HandleSwitcherRouteClicked(ATSAVVideoSwitcher* Switcher, FGuid InputId, FName BusName);
+
+	UFUNCTION()
+	void SwitcherDiscoverClicked();
+
+	UFUNCTION()
+	void SwitcherCutClicked();
+
+	UFUNCTION()
+	void SwitcherAutoClicked();
+
+	UFUNCTION()
+	void SwitcherAddUrlClicked();
+
+	UFUNCTION()
+	void SurfaceRouteProgramClicked();
+
+	UFUNCTION()
+	void SurfaceRoutePreviewClicked();
+
+	UFUNCTION()
+	void SurfaceRouteAux1Clicked();
+
+	UFUNCTION()
+	void SurfaceRouteAux2Clicked();
+
+	UFUNCTION()
+	void SurfaceRouteDirectClicked();
+
+	UFUNCTION()
+	void LEDWallApplyConfigurationClicked();
+
+	UFUNCTION()
+	void LEDWallToggleSeamsClicked();
+
+	UFUNCTION()
+	void LEDWallApplyPanelStyleClicked();
+
+	UFUNCTION()
+	void CameraTypeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+
+	UFUNCTION()
+	void CameraLensChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
+
+	UFUNCTION()
+	void CameraFocalLengthCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UFUNCTION()
+	void CameraApertureCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UFUNCTION()
+	void CameraFocusCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UFUNCTION()
+	void CameraViscaIpCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UFUNCTION()
+	void CameraViscaPortCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	UFUNCTION()
+	void CameraToggleViscaClicked();
+
+	UFUNCTION()
+	void CameraApplyPtzClicked();
+
+	UFUNCTION()
+	void CameraViscaHomeClicked();
+
+	UFUNCTION()
+	void CameraViscaStopClicked();
+
+	UFUNCTION()
+	void CameraViewThroughClicked();
+
+	UFUNCTION()
+	void CameraReturnToEditorClicked();
 
 	UFUNCTION()
 	void NewProjectClicked();
@@ -217,6 +303,79 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> UndoStatusText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> ContextToolPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> ContextActor;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ATSAVVideoSwitcher> ContextSwitcher;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ATSAVMediaSurfaceActor> ContextMediaSurface;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ATSAVLEDWall> ContextLEDWall;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ATSAVCameraActor> ContextCamera;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> SwitcherInputNameField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> SwitcherInputUrlField;
+
+	/** Ordered runtime LED configurator fields; indexes are private to TSAVMainWidget.cpp. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UEditableTextBox>> LEDWallFields;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> LEDPanelColumnField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> LEDPanelRowField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UComboBoxString> LEDPanelStyleCombo;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UComboBoxString> LEDLinkPatternCombo;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UComboBoxString> LEDSubpixelCombo;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UComboBoxString> CameraTypeCombo;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UComboBoxString> CameraLensCombo;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraFocalLengthField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraApertureField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraFocusField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraViscaIpField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraViscaPortField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraPanField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraTiltField;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CameraZoomField;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBorder> MenuPopup;

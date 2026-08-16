@@ -14,6 +14,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "TSAVMediaSurfaceActor.h"
+#include "TSAVStateSerializable.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVProjectSubsystem)
 
@@ -179,6 +181,10 @@ bool UTSAVProjectSubsystem::SaveProject(const FString& FilePath)
 		Properties->SetBoolField(TEXT("locked"), SceneObject->bLocked);
 		Properties->SetBoolField(TEXT("visible"), SceneObject->bVisible);
 		ObjectJson->SetObjectField(TEXT("properties"), Properties);
+		if (const ITSAVStateSerializable* Serializable = Cast<ITSAVStateSerializable>(*It))
+		{
+			ObjectJson->SetStringField(TEXT("customState"), Serializable->CaptureTSAVState());
+		}
 		Objects.Add(MakeShared<FJsonValueObject>(ObjectJson));
 	}
 	Root->SetArrayField(TEXT("objects"), Objects);
@@ -287,7 +293,21 @@ bool UTSAVProjectSubsystem::LoadProject(const FString& FilePath)
 				SceneObject->bLocked = (*Properties)->GetBoolField(TEXT("locked"));
 				SceneObject->SetObjectVisible((*Properties)->GetBoolField(TEXT("visible")));
 			}
+			FString CustomState;
+			if (ObjectJson->TryGetStringField(TEXT("customState"), CustomState) && !CustomState.IsEmpty())
+			{
+				if (ITSAVStateSerializable* Serializable = Cast<ITSAVStateSerializable>(Actor))
+				{
+					Serializable->RestoreTSAVState(CustomState);
+				}
+			}
 		}
+	}
+
+	// Resolve cross-actor video routes after every switcher and camera has been restored.
+	for (TActorIterator<ATSAVMediaSurfaceActor> It(World); It; ++It)
+	{
+		It->RefreshMedia();
 	}
 
 	CurrentProjectPath = TargetPath;

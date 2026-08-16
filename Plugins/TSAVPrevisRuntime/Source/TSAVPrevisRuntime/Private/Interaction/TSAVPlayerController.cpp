@@ -419,6 +419,22 @@ void ATSAVPlayerController::FrameSelection()
 	SetControlRotation((BoundsOrigin - ViewPawn->GetActorLocation()).Rotation());
 }
 
+void ATSAVPlayerController::ViewThroughCamera(AActor* CameraActor)
+{
+	if (IsValid(CameraActor))
+	{
+		SetViewTargetWithBlend(CameraActor, 0.25f);
+	}
+}
+
+void ATSAVPlayerController::ReturnToEditorCamera()
+{
+	if (APawn* EditorPawn = GetPawn())
+	{
+		SetViewTargetWithBlend(EditorPawn, 0.25f);
+	}
+}
+
 void ATSAVPlayerController::DeleteSelection(const FInputActionValue& Value)
 {
 	if (!GetLocalPlayer() || !GetGameInstance())

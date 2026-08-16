@@ -8,6 +8,7 @@
 #include "Interaction/TSAVSceneObjectActor.h"
 #include "Interaction/TSAVSceneObjectComponent.h"
 #include "Project/TSAVProjectSubsystem.h"
+#include "TSAVStateSerializable.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVCommandSubsystem)
 
@@ -24,6 +25,7 @@ namespace TSAVCommands::Private
 		ETSAVObjectType ObjectType = ETSAVObjectType::Unknown;
 		bool bLocked = false;
 		bool bVisible = true;
+		FString CustomState;
 
 		static FActorSnapshot Capture(AActor* InActor)
 		{
@@ -44,6 +46,10 @@ namespace TSAVCommands::Private
 				Snapshot.ObjectType = SceneObject->ObjectType;
 				Snapshot.bLocked = SceneObject->bLocked;
 				Snapshot.bVisible = SceneObject->bVisible;
+			}
+			if (const ITSAVStateSerializable* Serializable = Cast<ITSAVStateSerializable>(InActor))
+			{
+				Snapshot.CustomState = Serializable->CaptureTSAVState();
 			}
 			return Snapshot;
 		}
@@ -67,6 +73,17 @@ namespace TSAVCommands::Private
 				SceneObject->ObjectType = ObjectType;
 				SceneObject->bLocked = bLocked;
 				SceneObject->SetObjectVisible(bVisible);
+			}
+			if (ITSAVStateSerializable* Serializable = Cast<ITSAVStateSerializable>(SpawnedActor))
+			{
+				if (CustomState.IsEmpty())
+				{
+					CustomState = Serializable->CaptureTSAVState();
+				}
+				else
+				{
+					Serializable->RestoreTSAVState(CustomState);
+				}
 			}
 			Actor = SpawnedActor;
 			return SpawnedActor;
@@ -155,6 +172,38 @@ namespace TSAVCommands::Private
 		FGuid ObjectId;
 		FTransform Before;
 		FTransform After;
+		FText Description;
+	};
+
+	class FCustomStateCommand final : public UTSAVCommandSubsystem::ITSAVCommand
+	{
+	public:
+		FCustomStateCommand(AActor* InActor, FString InBefore, FString InAfter, FText InDescription)
+			: Actor(InActor), World(InActor ? InActor->GetWorld() : nullptr), Before(MoveTemp(InBefore)), After(MoveTemp(InAfter)), Description(MoveTemp(InDescription))
+		{
+			if (const UTSAVSceneObjectComponent* SceneObject = InActor ? InActor->FindComponentByClass<UTSAVSceneObjectComponent>() : nullptr)
+			{
+				ObjectId = SceneObject->ObjectId;
+			}
+		}
+		virtual void Execute() override { Apply(After); }
+		virtual void Undo() override { Apply(Before); }
+		virtual FText GetDescription() const override { return Description; }
+		virtual AActor* GetAffectedActor() const override { return Resolve(); }
+	private:
+		AActor* Resolve() const { return Actor.IsValid() ? Actor.Get() : FindActorById(World.Get(), ObjectId); }
+		void Apply(const FString& State)
+		{
+			if (ITSAVStateSerializable* Serializable = Cast<ITSAVStateSerializable>(Resolve()))
+			{
+				Serializable->RestoreTSAVState(State);
+			}
+		}
+		TWeakObjectPtr<AActor> Actor;
+		TWeakObjectPtr<UWorld> World;
+		FGuid ObjectId;
+		FString Before;
+		FString After;
 		FText Description;
 	};
 
@@ -306,6 +355,22 @@ bool UTSAVCommandSubsystem::SetVisible(AActor* Actor, const bool bVisible)
 	}
 	ExecuteAndStore(MakeShared<TSAVCommands::Private::FPropertyCommand>(Actor, TSAVCommands::Private::EPropertyKind::Visible,
 		LexToString(SceneObject->bVisible), LexToString(bVisible), NSLOCTEXT("TSAVPreVis", "VisibilityCommand", "Change Visibility")));
+	return true;
+}
+
+bool UTSAVCommandSubsystem::CommitAppliedActorState(AActor* Actor, const FString& BeforeState, const FText& Description)
+{
+	ITSAVStateSerializable* Serializable = IsValid(Actor) ? Cast<ITSAVStateSerializable>(Actor) : nullptr;
+	if (!Serializable)
+	{
+		return false;
+	}
+	const FString AfterState = Serializable->CaptureTSAVState();
+	if (BeforeState == AfterState)
+	{
+		return false;
+	}
+	StoreApplied(MakeShared<TSAVCommands::Private::FCustomStateCommand>(Actor, BeforeState, AfterState, Description));
 	return true;
 }
 

@@ -4,9 +4,13 @@
 
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Dom/JsonObject.h"
 #include "Engine/CollisionProfile.h"
 #include "Materials/MaterialInterface.h"
 #include "ProceduralMeshComponent.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "TSAVLEDPanelDefinition.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -768,6 +772,140 @@ void ATSAVLEDWall::RebuildPanelLayout()
 	RefreshMedia();
 	UpdateGeometry();
 #endif
+}
+
+FString ATSAVLEDWall::CaptureTSAVState() const
+{
+	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("surface"), Super::CaptureTSAVState());
+	Root->SetStringField(TEXT("panelDefinition"), PanelDefinition ? PanelDefinition->GetPathName() : FString());
+	Root->SetBoolField(TEXT("usePanelDefinition"), bUsePanelDefinition);
+	Root->SetNumberField(TEXT("columns"), Columns);
+	Root->SetNumberField(TEXT("rows"), Rows);
+	Root->SetNumberField(TEXT("panelWidthCm"), PanelWidthCm);
+	Root->SetNumberField(TEXT("panelHeightCm"), PanelHeightCm);
+	Root->SetNumberField(TEXT("panelResolutionX"), PanelResolutionX);
+	Root->SetNumberField(TEXT("panelResolutionY"), PanelResolutionY);
+	Root->SetNumberField(TEXT("panelGapCm"), PanelGapCm);
+	Root->SetNumberField(TEXT("wallDepthCm"), WallDepthCm);
+	Root->SetNumberField(TEXT("borderCm"), BorderCm);
+	Root->SetBoolField(TEXT("showPanelSeams"), bShowPanelSeams);
+	Root->SetNumberField(TEXT("roundEdgeRadiusMeters"), RoundEdgeRadiusMeters);
+	Root->SetNumberField(TEXT("linkPattern"), static_cast<uint8>(LinkPattern));
+
+	auto AddFloatArray = [&Root](const TCHAR* Name, const TArray<float>& Values)
+	{
+		TArray<TSharedPtr<FJsonValue>> JsonValues;
+		JsonValues.Reserve(Values.Num());
+		for (const float Value : Values) { JsonValues.Add(MakeShared<FJsonValueNumber>(Value)); }
+		Root->SetArrayField(Name, JsonValues);
+	};
+	auto AddBoolArray = [&Root](const TCHAR* Name, const TArray<bool>& Values)
+	{
+		TArray<TSharedPtr<FJsonValue>> JsonValues;
+		JsonValues.Reserve(Values.Num());
+		for (const bool Value : Values) { JsonValues.Add(MakeShared<FJsonValueBoolean>(Value)); }
+		Root->SetArrayField(Name, JsonValues);
+	};
+	AddFloatArray(TEXT("columnSeamAngles"), ColumnSeamAnglesDegrees);
+	AddFloatArray(TEXT("rowSeamAngles"), RowSeamAnglesDegrees);
+	AddBoolArray(TEXT("internalCurveEnabled"), ColumnInternalCurveEnabled);
+	AddFloatArray(TEXT("internalCurveAngleA"), ColumnInternalCurveAngleADegrees);
+	AddFloatArray(TEXT("internalCurveAngleB"), ColumnInternalCurveAngleBDegrees);
+	AddBoolArray(TEXT("ignoreColumnCurvesByRow"), RowIgnoreInternalColumnCurves);
+
+	TArray<TSharedPtr<FJsonValue>> EdgeValues;
+	EdgeValues.Reserve(PanelEdgeStyles.Num());
+	for (const ETSAVLEDPanelEdgeStyle Style : PanelEdgeStyles)
+	{
+		EdgeValues.Add(MakeShared<FJsonValueNumber>(static_cast<uint8>(Style)));
+	}
+	Root->SetArrayField(TEXT("panelEdgeStyles"), EdgeValues);
+
+	FString Result;
+	FJsonSerializer::Serialize(Root, TJsonWriterFactory<>::Create(&Result));
+	return Result;
+}
+
+bool ATSAVLEDWall::RestoreTSAVState(const FString& State)
+{
+	TSharedPtr<FJsonObject> Root;
+	if (State.IsEmpty() || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(State), Root) || !Root)
+	{
+		return false;
+	}
+	FString SurfaceState;
+	if (!Root->TryGetStringField(TEXT("surface"), SurfaceState))
+	{
+		// Projects written before the runtime configurator stored only the base surface state.
+		return Super::RestoreTSAVState(State);
+	}
+	Super::RestoreTSAVState(SurfaceState);
+
+	FString PanelDefinitionPath;
+	Root->TryGetStringField(TEXT("panelDefinition"), PanelDefinitionPath);
+	PanelDefinition = PanelDefinitionPath.IsEmpty() ? nullptr : LoadObject<UTSAVLEDPanelDefinition>(nullptr, *PanelDefinitionPath);
+	Root->TryGetBoolField(TEXT("usePanelDefinition"), bUsePanelDefinition);
+	auto ReadInt = [&Root](const TCHAR* Name, int32& Value)
+	{
+		double Number = Value;
+		if (Root->TryGetNumberField(Name, Number)) { Value = FMath::RoundToInt(Number); }
+	};
+	auto ReadFloat = [&Root](const TCHAR* Name, float& Value)
+	{
+		double Number = Value;
+		if (Root->TryGetNumberField(Name, Number)) { Value = static_cast<float>(Number); }
+	};
+	ReadInt(TEXT("columns"), Columns);
+	ReadInt(TEXT("rows"), Rows);
+	ReadFloat(TEXT("panelWidthCm"), PanelWidthCm);
+	ReadFloat(TEXT("panelHeightCm"), PanelHeightCm);
+	ReadInt(TEXT("panelResolutionX"), PanelResolutionX);
+	ReadInt(TEXT("panelResolutionY"), PanelResolutionY);
+	ReadFloat(TEXT("panelGapCm"), PanelGapCm);
+	ReadFloat(TEXT("wallDepthCm"), WallDepthCm);
+	ReadFloat(TEXT("borderCm"), BorderCm);
+	Root->TryGetBoolField(TEXT("showPanelSeams"), bShowPanelSeams);
+	double Radius = RoundEdgeRadiusMeters;
+	if (Root->TryGetNumberField(TEXT("roundEdgeRadiusMeters"), Radius)) { RoundEdgeRadiusMeters = Radius; }
+	int32 LinkValue = static_cast<int32>(LinkPattern);
+	ReadInt(TEXT("linkPattern"), LinkValue);
+	LinkPattern = static_cast<ETSAVLEDLinkPattern>(FMath::Clamp(LinkValue, 0, 1));
+
+	auto ReadFloatArray = [&Root](const TCHAR* Name, TArray<float>& Values)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* JsonValues = nullptr;
+		if (!Root->TryGetArrayField(Name, JsonValues) || !JsonValues) { return; }
+		Values.Reset(JsonValues->Num());
+		for (const TSharedPtr<FJsonValue>& Value : *JsonValues) { Values.Add(static_cast<float>(Value->AsNumber())); }
+	};
+	auto ReadBoolArray = [&Root](const TCHAR* Name, TArray<bool>& Values)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* JsonValues = nullptr;
+		if (!Root->TryGetArrayField(Name, JsonValues) || !JsonValues) { return; }
+		Values.Reset(JsonValues->Num());
+		for (const TSharedPtr<FJsonValue>& Value : *JsonValues) { Values.Add(Value->AsBool()); }
+	};
+	ReadFloatArray(TEXT("columnSeamAngles"), ColumnSeamAnglesDegrees);
+	ReadFloatArray(TEXT("rowSeamAngles"), RowSeamAnglesDegrees);
+	ReadBoolArray(TEXT("internalCurveEnabled"), ColumnInternalCurveEnabled);
+	ReadFloatArray(TEXT("internalCurveAngleA"), ColumnInternalCurveAngleADegrees);
+	ReadFloatArray(TEXT("internalCurveAngleB"), ColumnInternalCurveAngleBDegrees);
+	ReadBoolArray(TEXT("ignoreColumnCurvesByRow"), RowIgnoreInternalColumnCurves);
+	const TArray<TSharedPtr<FJsonValue>>* EdgeValues = nullptr;
+	if (Root->TryGetArrayField(TEXT("panelEdgeStyles"), EdgeValues) && EdgeValues)
+	{
+		PanelEdgeStyles.Reset(EdgeValues->Num());
+		for (const TSharedPtr<FJsonValue>& Value : *EdgeValues)
+		{
+			PanelEdgeStyles.Add(static_cast<ETSAVLEDPanelEdgeStyle>(FMath::Clamp(FMath::RoundToInt(Value->AsNumber()), 0, static_cast<int32>(ETSAVLEDPanelEdgeStyle::Disabled))));
+		}
+	}
+
+	NormalizeShapeSettings();
+	UpdateGeometry();
+	RefreshMedia();
+	return true;
 }
 
 void ATSAVLEDWall::OnDisplayMaterialUpdated(UMaterialInterface* AppliedMaterial)
