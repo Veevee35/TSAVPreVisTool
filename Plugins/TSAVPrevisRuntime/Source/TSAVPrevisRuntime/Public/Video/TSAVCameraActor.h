@@ -133,10 +133,12 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void Destroyed() override;
 
 private:
 	void ApplyCameraConfiguration();
 	void ApplyPTZPreview();
+	void EnsureRenderTarget();
 	void UpdateRenderTarget();
 	bool SendViscaPayload(const TArray<uint8>& Payload);
 	bool SendViscaPanTilt();
@@ -168,7 +170,8 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "TSAV Camera|Components")
 	TObjectPtr<USceneCaptureComponent2D> SceneCapture;
 
-	UPROPERTY(VisibleAnywhere, Category = "TSAV Camera|Components")
+	/** Per-camera scene-capture target. Transient so runtime texture internals are never serialized into a level. */
+	UPROPERTY(Transient, DuplicateTransient, VisibleAnywhere, Category = "TSAV Camera|Components")
 	TObjectPtr<UTextureRenderTarget2D> VideoRenderTarget;
 
 	FSocket* ViscaSocket = nullptr;

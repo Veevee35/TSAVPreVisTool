@@ -9,6 +9,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "EngineUtils.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interaction/TSAVSceneObjectComponent.h"
 #include "Materials/Material.h"
@@ -17,6 +18,7 @@
 #include "Serialization/JsonWriter.h"
 #include "SocketSubsystem.h"
 #include "Sockets.h"
+#include "TSAVVideoSwitcher.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVCameraActor)
@@ -41,7 +43,6 @@ ATSAVCameraActor::ATSAVCameraActor()
 	CineCamera->SetupAttachment(TiltPivot);
 	SceneCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("Video Output"));
 	SceneCapture->SetupAttachment(TiltPivot);
-	VideoRenderTarget = CreateDefaultSubobject<UTextureRenderTarget2D>(TEXT("Video Render Target"));
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMesh.Succeeded())
@@ -59,9 +60,6 @@ ATSAVCameraActor::ATSAVCameraActor()
 	SceneCapture->SetRelativeLocation(FVector(50.0f, 0.0f, 0.0f));
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = true;
-	VideoRenderTarget->RenderTargetFormat = RTF_RGBA8;
-	VideoRenderTarget->InitAutoFormat(1280, 720);
-	SceneCapture->TextureTarget = VideoRenderTarget;
 }
 
 void ATSAVCameraActor::BeginPlay()
@@ -84,6 +82,28 @@ void ATSAVCameraActor::OnConstruction(const FTransform& Transform)
 		CameraId = FGuid::NewGuid();
 	}
 	ApplyCameraConfiguration();
+	if (CameraId.IsValid() && GetWorld())
+	{
+		// A routed wall may have constructed before this transient capture target
+		// existed. Republish affected buses once the camera output is ready.
+		for (TActorIterator<ATSAVVideoSwitcher> It(GetWorld()); It; ++It)
+		{
+			It->RefreshOutputsForProvider(CameraId);
+		}
+	}
+}
+
+void ATSAVCameraActor::Destroyed()
+{
+	if (CameraId.IsValid() && GetWorld())
+	{
+		for (TActorIterator<ATSAVVideoSwitcher> It(GetWorld()); It; ++It)
+		{
+			It->Modify();
+			It->RemoveProviderInputs(CameraId);
+		}
+	}
+	Super::Destroyed();
 }
 
 void ATSAVCameraActor::SetCameraType(const ETSAVCameraType NewType)
@@ -157,10 +177,7 @@ void ATSAVCameraActor::ApplyCameraConfiguration()
 
 void ATSAVCameraActor::UpdateRenderTarget()
 {
-	if (!VideoRenderTarget)
-	{
-		return;
-	}
+	EnsureRenderTarget();
 	const int32 Width = FMath::Clamp(OutputResolution.X, 160, 3840);
 	const int32 Height = FMath::Clamp(OutputResolution.Y, 90, 2160);
 	if (VideoRenderTarget->SizeX != Width || VideoRenderTarget->SizeY != Height)
@@ -170,6 +187,24 @@ void ATSAVCameraActor::UpdateRenderTarget()
 	if (SceneCapture)
 	{
 		SceneCapture->TextureTarget = VideoRenderTarget;
+	}
+}
+
+void ATSAVCameraActor::EnsureRenderTarget()
+{
+	// UTextureRenderTarget2D owns editor-only AssetImportData. Making it a
+	// default subobject causes level instances to retain a private CDO reference,
+	// which Unreal correctly rejects when saving the map. A transient object is
+	// the canonical scene-capture target and is recreated whenever the actor is
+	// constructed or loaded.
+	if (!VideoRenderTarget || !VideoRenderTarget->HasAnyFlags(RF_Transient) || VideoRenderTarget->GetOuter() != this)
+	{
+		VideoRenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("TSAV Camera Video Render Target"), RF_Transient);
+		VideoRenderTarget->RenderTargetFormat = RTF_RGBA8;
+		VideoRenderTarget->ClearColor = FLinearColor::Black;
+		const int32 Width = FMath::Clamp(OutputResolution.X, 160, 3840);
+		const int32 Height = FMath::Clamp(OutputResolution.Y, 90, 2160);
+		VideoRenderTarget->InitAutoFormat(Width, Height);
 	}
 }
 

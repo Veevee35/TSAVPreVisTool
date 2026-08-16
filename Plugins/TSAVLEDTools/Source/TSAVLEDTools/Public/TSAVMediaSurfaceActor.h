@@ -141,6 +141,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "TSAV LED|Media Routing")
 	ATSAVVideoSwitcher* GetVideoSwitcher() const { return VideoSwitcher; }
 
+	/** Reconnect this surface before its switcher broadcasts a routed bus change. */
+	bool EnsureVideoRouteBinding(ATSAVVideoSwitcher* Switcher, FName BusName);
+
 	virtual FString CaptureTSAVState() const override;
 	virtual bool RestoreTSAVState(const FString& State) override;
 

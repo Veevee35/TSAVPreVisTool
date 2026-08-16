@@ -95,6 +95,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV Video|Inputs")
 	bool RemoveInput(FGuid InputId);
 
+	/** Remove every input supplied by a provider actor (for example, a deleted camera). */
+	UFUNCTION(BlueprintCallable, Category = "TSAV Video|Inputs")
+	int32 RemoveProviderInputs(FGuid ProviderId);
+
 	UFUNCTION(BlueprintCallable, Category = "TSAV Video|Routing")
 	bool SetBusInput(FName BusName, FGuid InputId);
 
@@ -109,6 +113,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "TSAV Video|Routing")
 	FText GetBusInputLabel(FName BusName) const;
+
+	/** Reapply all current bus outputs to their routed video walls. */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "TSAV Video|Routing")
+	void RefreshOutputs();
+
+	/** Reapply buses that currently use the specified provider. */
+	void RefreshOutputsForProvider(FGuid ProviderId);
 
 	UMediaSource* GetOutputMediaSource(FName BusName);
 	UTexture* GetOutputTexture(FName BusName);
@@ -134,6 +145,9 @@ private:
 	const FTSAVVideoBus* FindBus(FName BusName) const;
 	AActor* ResolveProvider(FTSAVVideoInput& Input);
 	UMediaSource* ResolveMediaSource(FTSAVVideoInput& Input);
+	void BroadcastBusChanged(FName BusName);
+	void NormalizeBusSelections();
+	int32 PruneUnavailableProviderInputs();
 
 	UPROPERTY(VisibleAnywhere, Category = "TSAV Video|Components")
 	TObjectPtr<USceneComponent> SceneRoot;

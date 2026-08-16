@@ -173,6 +173,28 @@ void ATSAVMediaSurfaceActor::ClearVideoRoute()
 	RefreshMedia();
 }
 
+bool ATSAVMediaSurfaceActor::EnsureVideoRouteBinding(ATSAVVideoSwitcher* Switcher, const FName BusName)
+{
+	if (!bUseVideoSwitcher || !Switcher || !VideoBusName.IsEqual(BusName))
+	{
+		return false;
+	}
+	const bool bMatchesSwitcher = VideoSwitcher == Switcher
+		|| (VideoSwitcherId.IsValid() && VideoSwitcherId == Switcher->SwitcherId);
+	if (!bMatchesSwitcher)
+	{
+		return false;
+	}
+	if (VideoSwitcher && VideoSwitcher != Switcher)
+	{
+		VideoSwitcher->OnBusChanged.RemoveDynamic(this, &ATSAVMediaSurfaceActor::HandleSwitcherBusChanged);
+	}
+	VideoSwitcher = Switcher;
+	VideoSwitcherId = Switcher->SwitcherId;
+	Switcher->OnBusChanged.AddUniqueDynamic(this, &ATSAVMediaSurfaceActor::HandleSwitcherBusChanged);
+	return true;
+}
+
 void ATSAVMediaSurfaceActor::HandleSwitcherBusChanged(const FName BusName)
 {
 	if (bUseVideoSwitcher && BusName.IsEqual(VideoBusName))

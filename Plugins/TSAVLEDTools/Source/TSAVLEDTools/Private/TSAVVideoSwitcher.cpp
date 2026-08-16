@@ -16,6 +16,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "StreamMediaSource.h"
+#include "TSAVMediaSurfaceActor.h"
 #include "TSAVVideoSourceProvider.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -79,6 +80,12 @@ void ATSAVVideoSwitcher::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	NormalizeConfiguration();
+	if (PruneUnavailableProviderInputs() > 0)
+	{
+		NormalizeBusSelections();
+		OnInputsChanged.Broadcast();
+	}
+	RefreshOutputs();
 }
 
 void ATSAVVideoSwitcher::NormalizeConfiguration()
@@ -108,6 +115,9 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 {
 	NormalizeConfiguration();
 	int32 Added = 0;
+	bool bInputsChanged = false;
+	TSet<FGuid> VisibleProviderIds;
+	const bool bCanValidateProviders = GetWorld() != nullptr;
 	if (UWorld* World = GetWorld())
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
@@ -119,12 +129,18 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 				continue;
 			}
 			const FGuid ProviderId = Provider->GetTSAVVideoSourceId();
+			if (!ProviderId.IsValid())
+			{
+				continue;
+			}
+			VisibleProviderIds.Add(ProviderId);
 			FTSAVVideoInput* Existing = Inputs.FindByPredicate([&](const FTSAVVideoInput& Input)
 			{
 				return Input.Kind == ETSAVVideoInputKind::CameraFeed && Input.ProviderId == ProviderId;
 			});
 			if (Existing)
 			{
+				bInputsChanged |= !Existing->Label.EqualTo(Provider->GetTSAVVideoSourceName());
 				Existing->ProviderActor = Actor;
 				Existing->Label = Provider->GetTSAVVideoSourceName();
 				continue;
@@ -136,8 +152,19 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 			Input.ProviderId = ProviderId;
 			Input.ProviderActor = Actor;
 			++Added;
+			bInputsChanged = true;
 		}
 	}
+
+	// Camera inputs refer to live provider actors. Keeping them after an actor is
+	// deleted leaves a bus pointing at an input that can never produce a texture.
+	const int32 RemovedProviders = bCanValidateProviders
+		? Inputs.RemoveAll([&VisibleProviderIds](const FTSAVVideoInput& Input)
+		{
+			return Input.Kind == ETSAVVideoInputKind::CameraFeed && !VisibleProviderIds.Contains(Input.ProviderId);
+		})
+		: 0;
+	bInputsChanged |= RemovedProviders > 0;
 
 	FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
 	TArray<FAssetData> Assets;
@@ -155,6 +182,7 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 		Input.Kind = ETSAVVideoInputKind::MediaAsset;
 		Input.MediaSource = Source;
 		++Added;
+		bInputsChanged = true;
 	}
 
 	// NDIMedia exposes current network senders through MediaIOCore. Their full
@@ -189,24 +217,19 @@ int32 ATSAVVideoSwitcher::DiscoverSources()
 				Input.StreamUrl = SourceUrl;
 				ResolveMediaSource(Input);
 				++Added;
+				bInputsChanged = true;
 			}
 		}
 	}
 
-	if (Added > 0)
+	NormalizeBusSelections();
+	if (bInputsChanged)
 	{
-		if (FTSAVVideoBus* Program = FindBus(TEXT("Program")); Program && !Program->SelectedInputId.IsValid() && !Inputs.IsEmpty())
-		{
-			Program->SelectedInputId = Inputs[0].InputId;
-		}
-		if (FTSAVVideoBus* Preview = FindBus(TEXT("Preview")); Preview && !Preview->SelectedInputId.IsValid() && Inputs.Num() > 1)
-		{
-			Preview->SelectedInputId = Inputs[1].InputId;
-		}
 		OnInputsChanged.Broadcast();
-		OnBusChanged.Broadcast(TEXT("Program"));
-		OnBusChanged.Broadcast(TEXT("Preview"));
 	}
+	// Refresh even when the list did not change. This makes the editor's Refresh
+	// Inputs button repair wall bindings after a level reload.
+	RefreshOutputs();
 	return Added;
 }
 
@@ -235,27 +258,63 @@ bool ATSAVVideoSwitcher::RemoveInput(const FGuid InputId)
 		return false;
 	}
 	RuntimeStreamSources.Remove(InputId);
-	for (FTSAVVideoBus& Bus : Buses)
+	NormalizeBusSelections();
+	OnInputsChanged.Broadcast();
+	RefreshOutputs();
+	return true;
+}
+
+int32 ATSAVVideoSwitcher::RemoveProviderInputs(const FGuid ProviderId)
+{
+	if (!ProviderId.IsValid())
 	{
-		if (Bus.SelectedInputId == InputId)
+		return 0;
+	}
+	TArray<FGuid> RemovedInputIds;
+	for (const FTSAVVideoInput& Input : Inputs)
+	{
+		if (Input.Kind == ETSAVVideoInputKind::CameraFeed && Input.ProviderId == ProviderId)
 		{
-			Bus.SelectedInputId.Invalidate();
-			OnBusChanged.Broadcast(Bus.Name);
+			RemovedInputIds.Add(Input.InputId);
 		}
 	}
+	if (RemovedInputIds.IsEmpty())
+	{
+		return 0;
+	}
+	const int32 Removed = Inputs.RemoveAll([ProviderId](const FTSAVVideoInput& Input)
+	{
+		return Input.Kind == ETSAVVideoInputKind::CameraFeed && Input.ProviderId == ProviderId;
+	});
+	for (const FGuid InputId : RemovedInputIds)
+	{
+		RuntimeStreamSources.Remove(InputId);
+	}
+	NormalizeBusSelections();
 	OnInputsChanged.Broadcast();
-	return true;
+	RefreshOutputs();
+	return Removed;
 }
 
 bool ATSAVVideoSwitcher::SetBusInput(const FName BusName, const FGuid InputId)
 {
 	FTSAVVideoBus* Bus = FindBus(BusName);
-	if (!Bus || !FindInput(InputId) || Bus->SelectedInputId == InputId)
+	FTSAVVideoInput* Input = FindInput(InputId);
+	if (!Bus || !Input)
 	{
 		return false;
 	}
+	if (Input->Kind == ETSAVVideoInputKind::CameraFeed && !ResolveProvider(*Input))
+	{
+		// Do not allow an old camera row to become a dead crosspoint. Removing it
+		// also selects a valid Program fallback and republishes the wall output.
+		RemoveInput(InputId);
+		return false;
+	}
 	Bus->SelectedInputId = InputId;
-	OnBusChanged.Broadcast(BusName);
+	// Re-broadcasting an already selected input is intentional: it repairs a
+	// stale material/player binding without forcing the user through another bus.
+	BroadcastBusChanged(BusName);
 	return true;
 }
 
@@ -268,8 +327,8 @@ void ATSAVVideoSwitcher::Cut()
 		return;
 	}
 	Swap(Program->SelectedInputId, Preview->SelectedInputId);
-	OnBusChanged.Broadcast(Program->Name);
-	OnBusChanged.Broadcast(Preview->Name);
+	BroadcastBusChanged(Program->Name);
+	BroadcastBusChanged(Preview->Name);
 }
 
 void ATSAVVideoSwitcher::AutoTransition()
@@ -290,6 +349,30 @@ FText ATSAVVideoSwitcher::GetBusInputLabel(const FName BusName) const
 	return Input ? Input->Label : NSLOCTEXT("TSAVVideo", "NoVideoInput", "None");
 }
 
+void ATSAVVideoSwitcher::RefreshOutputs()
+{
+	for (const FTSAVVideoBus& Bus : Buses)
+	{
+		BroadcastBusChanged(Bus.Name);
+	}
+}
+
+void ATSAVVideoSwitcher::RefreshOutputsForProvider(const FGuid ProviderId)
+{
+	if (!ProviderId.IsValid())
+	{
+		return;
+	}
+	for (const FTSAVVideoBus& Bus : Buses)
+	{
+		const FTSAVVideoInput* Input = FindInput(Bus.SelectedInputId);
+		if (Input && Input->Kind == ETSAVVideoInputKind::CameraFeed && Input->ProviderId == ProviderId)
+		{
+			BroadcastBusChanged(Bus.Name);
+		}
+	}
+}
+
 UMediaSource* ATSAVVideoSwitcher::GetOutputMediaSource(const FName BusName)
 {
 	FTSAVVideoInput* Input = FindInput(GetBusInputId(BusName));
@@ -306,6 +389,76 @@ UTexture* ATSAVVideoSwitcher::GetOutputTexture(const FName BusName)
 	AActor* ProviderActor = ResolveProvider(*Input);
 	ITSAVVideoSourceProvider* Provider = Cast<ITSAVVideoSourceProvider>(ProviderActor);
 	return Provider ? Provider->GetTSAVVideoTexture() : nullptr;
+}
+
+void ATSAVVideoSwitcher::BroadcastBusChanged(const FName BusName)
+{
+	if (UWorld* World = GetWorld())
+	{
+		// Editor construction and level loading do not guarantee actor order. Make
+		// sure every routed wall is listening before publishing the new crosspoint.
+		for (TActorIterator<ATSAVMediaSurfaceActor> It(World); It; ++It)
+		{
+			It->EnsureVideoRouteBinding(this, BusName);
+		}
+	}
+	OnBusChanged.Broadcast(BusName);
+}
+
+void ATSAVVideoSwitcher::NormalizeBusSelections()
+{
+	for (FTSAVVideoBus& Bus : Buses)
+	{
+		if (Bus.SelectedInputId.IsValid() && !FindInput(Bus.SelectedInputId))
+		{
+			Bus.SelectedInputId.Invalidate();
+		}
+	}
+	if (FTSAVVideoBus* Program = FindBus(TEXT("Program")); Program && !Program->SelectedInputId.IsValid() && !Inputs.IsEmpty())
+	{
+		Program->SelectedInputId = Inputs[0].InputId;
+	}
+	if (FTSAVVideoBus* Preview = FindBus(TEXT("Preview")); Preview && !Preview->SelectedInputId.IsValid() && Inputs.Num() > 1)
+	{
+		Preview->SelectedInputId = Inputs[1].InputId;
+	}
+}
+
+int32 ATSAVVideoSwitcher::PruneUnavailableProviderInputs()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return 0;
+	}
+	TSet<FGuid> VisibleProviderIds;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		ITSAVVideoSourceProvider* Provider = Cast<ITSAVVideoSourceProvider>(Actor);
+		if (!Provider || Actor == this)
+		{
+			continue;
+		}
+		const FGuid ProviderId = Provider->GetTSAVVideoSourceId();
+		if (!ProviderId.IsValid())
+		{
+			continue;
+		}
+		VisibleProviderIds.Add(ProviderId);
+		for (FTSAVVideoInput& Input : Inputs)
+		{
+			if (Input.Kind == ETSAVVideoInputKind::CameraFeed && Input.ProviderId == ProviderId)
+			{
+				Input.ProviderActor = Actor;
+				Input.Label = Provider->GetTSAVVideoSourceName();
+			}
+		}
+	}
+	return Inputs.RemoveAll([&VisibleProviderIds](const FTSAVVideoInput& Input)
+	{
+		return Input.Kind == ETSAVVideoInputKind::CameraFeed && !VisibleProviderIds.Contains(Input.ProviderId);
+	});
 }
 
 FTSAVVideoInput* ATSAVVideoSwitcher::FindInput(const FGuid InputId)
@@ -448,10 +601,8 @@ bool ATSAVVideoSwitcher::RestoreTSAVState(const FString& State)
 		}
 	}
 	NormalizeConfiguration();
+	NormalizeBusSelections();
 	OnInputsChanged.Broadcast();
-	for (const FTSAVVideoBus& Bus : Buses)
-	{
-		OnBusChanged.Broadcast(Bus.Name);
-	}
+	RefreshOutputs();
 	return true;
 }
