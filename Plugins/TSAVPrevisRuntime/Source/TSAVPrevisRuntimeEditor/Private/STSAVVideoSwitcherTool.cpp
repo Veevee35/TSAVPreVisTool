@@ -91,7 +91,7 @@ void STSAVVideoSwitcherTool::Construct(const FArguments& InArgs)
 			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
 			[
 				SNew(STextBlock)
-				.Text(LOCTEXT("Description", "Refresh visible cameras, media assets, and NDI senders, then route any source directly to Program, Preview, or Aux."))
+				.Text(LOCTEXT("Description", "Route visible cameras, media assets, and NDI senders to switcher buses, then assign every video wall to the bus it should display."))
 				.AutoWrapText(true)
 			]
 			+ SVerticalBox::Slot()
@@ -204,15 +204,45 @@ void STSAVVideoSwitcherTool::Construct(const FArguments& InArgs)
 				SNew(SSplitter)
 				.Orientation(Orient_Vertical)
 				+ SSplitter::Slot()
-				.Value(0.58f)
+				.Value(0.40f)
 				[
-					SAssignNew(InputList, SListView<TSharedPtr<FTSAVSwitcherEditorInputItem>>)
-					.ListItemsSource(&InputItems)
-					.OnGenerateRow(this, &STSAVVideoSwitcherTool::GenerateInputRow)
-					.SelectionMode(ESelectionMode::None)
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 3.0f)
+					[
+						SNew(STextBlock).Text(LOCTEXT("InputsHeading", "VISIBLE INPUTS  |  ROUTE SOURCE TO BUS"))
+					]
+					+ SVerticalBox::Slot()
+					.FillHeight(1.0f)
+					[
+						SAssignNew(InputList, SListView<TSharedPtr<FTSAVSwitcherEditorInputItem>>)
+						.ListItemsSource(&InputItems)
+						.OnGenerateRow(this, &STSAVVideoSwitcherTool::GenerateInputRow)
+						.SelectionMode(ESelectionMode::None)
+					]
 				]
 				+ SSplitter::Slot()
-				.Value(0.42f)
+				.Value(0.34f)
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 3.0f)
+					[
+						SNew(STextBlock).Text(LOCTEXT("SurfacesHeading", "VIDEO WALL OUTPUTS  |  ROUTE BUS TO WALL"))
+					]
+					+ SVerticalBox::Slot()
+					.FillHeight(1.0f)
+					[
+						SAssignNew(SurfaceList, SListView<TSharedPtr<FTSAVSwitcherEditorSurfaceItem>>)
+						.ListItemsSource(&SurfaceItems)
+						.OnGenerateRow(this, &STSAVVideoSwitcherTool::GenerateSurfaceRow)
+						.SelectionMode(ESelectionMode::None)
+					]
+				]
+				+ SSplitter::Slot()
+				.Value(0.26f)
 				[
 					DetailsView.ToSharedRef()
 				]
@@ -274,6 +304,7 @@ void STSAVVideoSwitcherTool::Construct(const FArguments& InArgs)
 	}
 	else
 	{
+		RebuildSurfaceList();
 		SetStatus(LOCTEXT("NoSwitcherStatus", "No TSAV Video Switcher is present in the current level."), false);
 	}
 }
@@ -320,6 +351,7 @@ void STSAVVideoSwitcherTool::SetActiveSwitcher(ATSAVVideoSwitcher* Switcher)
 		}
 	}
 	RebuildInputList();
+	RebuildSurfaceList();
 	if (Switcher)
 	{
 		SetStatus(FText::Format(LOCTEXT("EditingSwitcher", "Editing {0}. Refresh Inputs to update visible NDI senders and level cameras."), GetActiveSwitcherText()), true);
@@ -448,6 +480,7 @@ FReply STSAVVideoSwitcherTool::RouteInput(const FGuid InputId, const FName BusNa
 		Switcher->PostEditChange();
 		Switcher->MarkPackageDirty();
 		RebuildInputList();
+		RebuildSurfaceList();
 		SetStatus(FText::Format(LOCTEXT("RouteSuccess", "{0} is now {1}."), FText::FromName(BusName), Switcher->GetBusInputLabel(BusName)), true);
 	}
 	return FReply::Handled();
@@ -475,6 +508,206 @@ FText STSAVVideoSwitcherTool::GetBusSummary(const FName BusName) const
 {
 	const ATSAVVideoSwitcher* Switcher = ActiveSwitcher.Get();
 	return FText::Format(LOCTEXT("BusSummary", "{0}: {1}"), FText::FromName(BusName), Switcher ? Switcher->GetBusInputLabel(BusName) : LOCTEXT("NoBusSource", "None"));
+}
+
+void STSAVVideoSwitcherTool::RebuildSurfaceList()
+{
+	SurfaceItems.Reset();
+	if (GEditor)
+	{
+		if (UWorld* World = GEditor->GetEditorWorldContext().World())
+		{
+			for (TActorIterator<ATSAVMediaSurfaceActor> It(World); It; ++It)
+			{
+				TSharedPtr<FTSAVSwitcherEditorSurfaceItem> Item = MakeShared<FTSAVSwitcherEditorSurfaceItem>();
+				Item->Surface = *It;
+				Item->Label = FText::FromString(It->GetActorLabel());
+				SurfaceItems.Add(Item);
+			}
+		}
+	}
+	SurfaceItems.Sort([](const TSharedPtr<FTSAVSwitcherEditorSurfaceItem>& Left, const TSharedPtr<FTSAVSwitcherEditorSurfaceItem>& Right)
+	{
+		return Left->Label.ToString() < Right->Label.ToString();
+	});
+	if (SurfaceList)
+	{
+		SurfaceList->RequestListRefresh();
+	}
+}
+
+TSharedRef<ITableRow> STSAVVideoSwitcherTool::GenerateSurfaceRow(const TSharedPtr<FTSAVSwitcherEditorSurfaceItem> Item, const TSharedRef<STableViewBase>& OwnerTable)
+{
+	const TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface = Item->Surface;
+	return SNew(STableRow<TSharedPtr<FTSAVSwitcherEditorSurfaceItem>>, OwnerTable)
+		.Padding(2.0f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(Item->Label)]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(this, &STSAVVideoSwitcherTool::GetSurfaceRouteSummary, Surface)
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth().Padding(2.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("WallProgramShort", "PGM"))
+				.ToolTipText(LOCTEXT("WallProgramTooltip", "Make this wall follow Program"))
+				.IsEnabled_Lambda([this]() { return ActiveSwitcher.IsValid(); })
+				.ButtonColorAndOpacity(GetSurfaceRouteButtonColor(Surface.Get(), TEXT("Program")))
+				.OnClicked_Lambda([this, Surface]() { return RouteSurface(Surface, TEXT("Program")); })
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth().Padding(2.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("WallPreviewShort", "PVW"))
+				.ToolTipText(LOCTEXT("WallPreviewTooltip", "Make this wall follow Preview"))
+				.IsEnabled_Lambda([this]() { return ActiveSwitcher.IsValid(); })
+				.ButtonColorAndOpacity(GetSurfaceRouteButtonColor(Surface.Get(), TEXT("Preview")))
+				.OnClicked_Lambda([this, Surface]() { return RouteSurface(Surface, TEXT("Preview")); })
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth().Padding(2.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("WallAux1Short", "A1"))
+				.ToolTipText(LOCTEXT("WallAux1Tooltip", "Make this wall follow Aux 1"))
+				.IsEnabled_Lambda([this]() { return ActiveSwitcher.IsValid(); })
+				.ButtonColorAndOpacity(GetSurfaceRouteButtonColor(Surface.Get(), TEXT("Aux 1")))
+				.OnClicked_Lambda([this, Surface]() { return RouteSurface(Surface, TEXT("Aux 1")); })
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth().Padding(2.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("WallAux2Short", "A2"))
+				.ToolTipText(LOCTEXT("WallAux2Tooltip", "Make this wall follow Aux 2"))
+				.IsEnabled_Lambda([this]() { return ActiveSwitcher.IsValid(); })
+				.ButtonColorAndOpacity(GetSurfaceRouteButtonColor(Surface.Get(), TEXT("Aux 2")))
+				.OnClicked_Lambda([this, Surface]() { return RouteSurface(Surface, TEXT("Aux 2")); })
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth().Padding(2.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("WallDirectShort", "DIRECT"))
+				.ToolTipText(LOCTEXT("WallDirectTooltip", "Stop following the switcher and use the wall's assigned Media Source"))
+				.ButtonColorAndOpacity(Surface.IsValid() && !Surface->bUseVideoSwitcher ? FLinearColor(0.55f, 0.35f, 0.10f) : FLinearColor::White)
+				.OnClicked_Lambda([this, Surface]() { return ClearSurfaceRoute(Surface); })
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth().Padding(2.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("SelectWallShort", "SELECT"))
+				.ToolTipText(LOCTEXT("SelectWallTooltip", "Select this wall in the level"))
+				.OnClicked_Lambda([this, Surface]() { return SelectSurfaceInLevel(Surface); })
+			]
+		];
+}
+
+FReply STSAVVideoSwitcherTool::RouteSurface(const TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface, const FName BusName)
+{
+	ATSAVMediaSurfaceActor* SurfaceActor = Surface.Get();
+	ATSAVVideoSwitcher* Switcher = ActiveSwitcher.Get();
+	if (!SurfaceActor || !Switcher)
+	{
+		return FReply::Handled();
+	}
+	const FScopedTransaction Transaction(FText::Format(LOCTEXT("RouteSurfaceTransaction", "Route {0} To TSAV Switcher"), FText::FromString(SurfaceActor->GetActorLabel())));
+	SurfaceActor->Modify();
+	SurfaceActor->SetVideoRoute(Switcher, BusName);
+	SurfaceActor->PostEditChange();
+	SurfaceActor->MarkPackageDirty();
+	RebuildSurfaceList();
+	SetStatus(FText::Format(
+		LOCTEXT("RouteSurfaceSuccess", "{0} now follows {1}: {2}."),
+		FText::FromString(SurfaceActor->GetActorLabel()), FText::FromName(BusName), Switcher->GetBusInputLabel(BusName)), true);
+	return FReply::Handled();
+}
+
+FReply STSAVVideoSwitcherTool::ClearSurfaceRoute(const TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface)
+{
+	ATSAVMediaSurfaceActor* SurfaceActor = Surface.Get();
+	if (!SurfaceActor)
+	{
+		return FReply::Handled();
+	}
+	const FScopedTransaction Transaction(FText::Format(LOCTEXT("ClearSurfaceRouteTransaction", "Use Direct Media On {0}"), FText::FromString(SurfaceActor->GetActorLabel())));
+	SurfaceActor->Modify();
+	SurfaceActor->ClearVideoRoute();
+	SurfaceActor->PostEditChange();
+	SurfaceActor->MarkPackageDirty();
+	RebuildSurfaceList();
+	SetStatus(FText::Format(LOCTEXT("ClearSurfaceRouteSuccess", "{0} now uses its directly assigned Media Source."), FText::FromString(SurfaceActor->GetActorLabel())), true);
+	return FReply::Handled();
+}
+
+FReply STSAVVideoSwitcherTool::SelectSurfaceInLevel(const TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface)
+{
+	if (ATSAVMediaSurfaceActor* SurfaceActor = Surface.Get(); GEditor && SurfaceActor)
+	{
+		GEditor->SelectNone(false, true, false);
+		GEditor->SelectActor(SurfaceActor, true, true, true);
+	}
+	return FReply::Handled();
+}
+
+FSlateColor STSAVVideoSwitcherTool::GetSurfaceRouteButtonColor(const ATSAVMediaSurfaceActor* Surface, const FName BusName) const
+{
+	if (!Surface || !Surface->bUseVideoSwitcher || Surface->GetVideoSwitcher() != ActiveSwitcher.Get() || !Surface->VideoBusName.IsEqual(BusName))
+	{
+		return FLinearColor::White;
+	}
+	if (BusName.IsEqual(TEXT("Program")))
+	{
+		return FLinearColor(0.80f, 0.10f, 0.10f);
+	}
+	if (BusName.IsEqual(TEXT("Preview")))
+	{
+		return FLinearColor(0.10f, 0.65f, 0.20f);
+	}
+	return FLinearColor(0.10f, 0.35f, 0.75f);
+}
+
+FText STSAVVideoSwitcherTool::GetSurfaceRouteSummary(const TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface) const
+{
+	const ATSAVMediaSurfaceActor* SurfaceActor = Surface.Get();
+	if (!SurfaceActor)
+	{
+		return LOCTEXT("MissingSurface", "Wall unavailable");
+	}
+	if (!SurfaceActor->bUseVideoSwitcher)
+	{
+		return SurfaceActor->MediaSource
+			? FText::Format(LOCTEXT("DirectSurfaceSource", "Direct  |  {0}"), FText::FromString(SurfaceActor->MediaSource->GetName()))
+			: LOCTEXT("DirectSurfaceNone", "Direct  |  No Media Source");
+	}
+	const ATSAVVideoSwitcher* SurfaceSwitcher = SurfaceActor->GetVideoSwitcher();
+	if (!SurfaceSwitcher)
+	{
+		return FText::Format(LOCTEXT("MissingSurfaceSwitcher", "Missing switcher  |  {0}"), FText::FromName(SurfaceActor->VideoBusName));
+	}
+	if (SurfaceSwitcher == ActiveSwitcher.Get())
+	{
+		return FText::Format(
+			LOCTEXT("ActiveSurfaceRoute", "{0}  |  {1}"),
+			FText::FromName(SurfaceActor->VideoBusName), SurfaceSwitcher->GetBusInputLabel(SurfaceActor->VideoBusName));
+	}
+	return FText::Format(
+		LOCTEXT("OtherSurfaceRoute", "{0} / {1}  |  {2}"),
+		FText::FromString(SurfaceSwitcher->GetActorLabel()), FText::FromName(SurfaceActor->VideoBusName),
+		SurfaceSwitcher->GetBusInputLabel(SurfaceActor->VideoBusName));
 }
 
 FSlateColor STSAVVideoSwitcherTool::GetStatusColor() const
@@ -547,6 +780,7 @@ FReply STSAVVideoSwitcherTool::RefreshSwitchers()
 		ActiveSwitcher.Reset();
 		DetailsView->SetObject(nullptr);
 		RebuildInputList();
+		RebuildSurfaceList();
 		SetStatus(LOCTEXT("NoSwitchersAfterRefresh", "No TSAV Video Switcher actors were found in the current level."), false);
 	}
 	return FReply::Handled();
@@ -565,6 +799,7 @@ FReply STSAVVideoSwitcherTool::RefreshInputs()
 	Switcher->PostEditChange();
 	Switcher->MarkPackageDirty();
 	RebuildInputList();
+	RebuildSurfaceList();
 	SetStatus(FText::Format(LOCTEXT("RefreshInputsSuccess", "Input list refreshed: {0} total, {1} newly discovered."), FText::AsNumber(Switcher->Inputs.Num()), FText::AsNumber(Added)), true);
 	return FReply::Handled();
 }

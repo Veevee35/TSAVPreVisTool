@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "TSAVMediaSurfaceActor.h"
 #include "TSAVVideoSwitcher.h"
 #include "Widgets/SCompoundWidget.h"
 
@@ -16,6 +17,12 @@ struct FTSAVSwitcherEditorInputItem
 	FGuid InputId;
 	FText Label;
 	FText Detail;
+};
+
+struct FTSAVSwitcherEditorSurfaceItem
+{
+	TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface;
+	FText Label;
 };
 
 /** Editor-facing video switcher panel with visible-source discovery and bus routing. */
@@ -41,6 +48,13 @@ private:
 	FReply RouteInput(FGuid InputId, FName BusName);
 	FSlateColor GetRouteButtonColor(FGuid InputId, FName BusName) const;
 	FText GetBusSummary(FName BusName) const;
+	void RebuildSurfaceList();
+	TSharedRef<ITableRow> GenerateSurfaceRow(TSharedPtr<FTSAVSwitcherEditorSurfaceItem> Item, const TSharedRef<STableViewBase>& OwnerTable);
+	FReply RouteSurface(TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface, FName BusName);
+	FReply ClearSurfaceRoute(TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface);
+	FReply SelectSurfaceInLevel(TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface);
+	FSlateColor GetSurfaceRouteButtonColor(const ATSAVMediaSurfaceActor* Surface, FName BusName) const;
+	FText GetSurfaceRouteSummary(TWeakObjectPtr<ATSAVMediaSurfaceActor> Surface) const;
 	FText GetStatusText() const { return StatusText; }
 	FSlateColor GetStatusColor() const;
 	FReply CreateSwitcher();
@@ -58,6 +72,8 @@ private:
 	TSharedPtr<SComboBox<TSharedPtr<FSwitcherOption>>> SwitcherCombo;
 	TArray<TSharedPtr<FTSAVSwitcherEditorInputItem>> InputItems;
 	TSharedPtr<SListView<TSharedPtr<FTSAVSwitcherEditorInputItem>>> InputList;
+	TArray<TSharedPtr<FTSAVSwitcherEditorSurfaceItem>> SurfaceItems;
+	TSharedPtr<SListView<TSharedPtr<FTSAVSwitcherEditorSurfaceItem>>> SurfaceList;
 	TSharedPtr<SEditableTextBox> ManualNameField;
 	TSharedPtr<SEditableTextBox> ManualUrlField;
 	TSharedPtr<IDetailsView> DetailsView;
