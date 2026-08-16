@@ -13,6 +13,8 @@ public class TSAVPrevisRuntimeEditor : ModuleRules
 			{
 				"Core",
 				"CoreUObject",
+				"DMXProtocol",
+				"DMXRuntime",
 				"Engine",
 				"InputCore",
 				"LevelEditor",

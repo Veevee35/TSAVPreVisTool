@@ -5,6 +5,8 @@
 #include "Framework/Application/SlateApplication.h"
 #include "STSAVCameraControllerTool.h"
 #include "STSAVCameraTool.h"
+#include "STSAVDMXLightingConsoleTool.h"
+#include "STSAVDMXPatchTool.h"
 #include "STSAVScreenControlTool.h"
 #include "STSAVVideoSwitcherTool.h"
 #include "Styling/AppStyle.h"
@@ -17,6 +19,8 @@ namespace TSAVPrevisRuntimeEditor
 {
 	const FName CameraToolTabName(TEXT("TSAVCameraTool"));
 	const FName CameraControllerToolTabName(TEXT("TSAVCameraControllerTool"));
+	const FName DMXPatchToolTabName(TEXT("TSAVDMXPatchTool"));
+	const FName LightingConsoleToolTabName(TEXT("TSAVLightingConsoleTool"));
 	const FName ScreenControlToolTabName(TEXT("TSAVScreenControlTool"));
 	const FName VideoSwitcherToolTabName(TEXT("TSAVVideoSwitcherTool"));
 }
@@ -37,6 +41,22 @@ void FTSAVPrevisRuntimeEditorModule::StartupModule()
 		.SetDisplayName(LOCTEXT("CameraControllerToolTabTitle", "TSAV Camera Controller"))
 		.SetTooltipText(LOCTEXT("CameraControllerToolTabTooltip", "Control every TSAV camera and configure VISCA-over-IP PTZ connections."))
 		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.CineCameraActor")))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		TSAVPrevisRuntimeEditor::DMXPatchToolTabName,
+		FOnSpawnTab::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::SpawnDMXPatchToolTab))
+		.SetDisplayName(LOCTEXT("DMXPatchToolTabTitle", "TSAV DMX Patch & Test"))
+		.SetTooltipText(LOCTEXT("DMXPatchToolTabTooltip", "Search, address, validate, spawn, and test all 607 generated fixture patches."))
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.Light")))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		TSAVPrevisRuntimeEditor::LightingConsoleToolTabName,
+		FOnSpawnTab::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::SpawnLightingConsoleToolTab))
+		.SetDisplayName(LOCTEXT("LightingConsoleToolTabTitle", "TSAV Lighting Console"))
+		.SetTooltipText(LOCTEXT("LightingConsoleToolTabTooltip", "Live programmer and raw attribute faders for generated DMX fixture patches."))
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.SpotLight")))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
@@ -68,6 +88,8 @@ void FTSAVPrevisRuntimeEditorModule::ShutdownModule()
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::CameraToolTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::CameraControllerToolTabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::DMXPatchToolTabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::LightingConsoleToolTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::ScreenControlToolTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::VideoSwitcherToolTabName);
 	}
@@ -90,6 +112,18 @@ void FTSAVPrevisRuntimeEditorModule::RegisterMenus()
 		LOCTEXT("OpenCameraControllerToolTooltip", "Control all cameras, image settings, positions, and VISCA-over-IP PTZ connections from one panel."),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.CineCameraActor")),
 		FUIAction(FExecuteAction::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::OpenCameraControllerToolTab)));
+	Section.AddMenuEntry(
+		TEXT("OpenTSAVDMXPatchTool"),
+		LOCTEXT("OpenDMXPatchToolLabel", "TSAV DMX Patch & Fixture Test"),
+		LOCTEXT("OpenDMXPatchToolTooltip", "Search all 607 generated fixtures, safely edit patches, spawn actors, and run live fixture tests."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.Light")),
+		FUIAction(FExecuteAction::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::OpenDMXPatchToolTab)));
+	Section.AddMenuEntry(
+		TEXT("OpenTSAVLightingConsoleTool"),
+		LOCTEXT("OpenLightingConsoleToolLabel", "TSAV Lighting Console"),
+		LOCTEXT("OpenLightingConsoleToolTooltip", "Select any generated patches and control their common or raw DMX attributes with live faders."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.SpotLight")),
+		FUIAction(FExecuteAction::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::OpenLightingConsoleToolTab)));
 	Section.AddMenuEntry(
 		TEXT("OpenTSAVScreenControlTool"),
 		LOCTEXT("OpenScreenControlToolLabel", "TSAV Screen Control"),
@@ -117,6 +151,16 @@ void FTSAVPrevisRuntimeEditorModule::OpenCameraControllerToolTab()
 void FTSAVPrevisRuntimeEditorModule::OpenScreenControlToolTab()
 {
 	FGlobalTabmanager::Get()->TryInvokeTab(TSAVPrevisRuntimeEditor::ScreenControlToolTabName);
+}
+
+void FTSAVPrevisRuntimeEditorModule::OpenDMXPatchToolTab()
+{
+	FGlobalTabmanager::Get()->TryInvokeTab(TSAVPrevisRuntimeEditor::DMXPatchToolTabName);
+}
+
+void FTSAVPrevisRuntimeEditorModule::OpenLightingConsoleToolTab()
+{
+	FGlobalTabmanager::Get()->TryInvokeTab(TSAVPrevisRuntimeEditor::LightingConsoleToolTabName);
 }
 
 void FTSAVPrevisRuntimeEditorModule::OpenVideoSwitcherToolTab()
@@ -148,6 +192,24 @@ TSharedRef<SDockTab> FTSAVPrevisRuntimeEditorModule::SpawnScreenControlToolTab(c
 		.TabRole(ETabRole::NomadTab)
 		[
 			SNew(STSAVScreenControlTool)
+		];
+}
+
+TSharedRef<SDockTab> FTSAVPrevisRuntimeEditorModule::SpawnDMXPatchToolTab(const FSpawnTabArgs& Args)
+{
+	return SNew(SDockTab)
+		.TabRole(ETabRole::NomadTab)
+		[
+			SNew(STSAVDMXPatchTool)
+		];
+}
+
+TSharedRef<SDockTab> FTSAVPrevisRuntimeEditorModule::SpawnLightingConsoleToolTab(const FSpawnTabArgs& Args)
+{
+	return SNew(SDockTab)
+		.TabRole(ETabRole::NomadTab)
+		[
+			SNew(STSAVDMXLightingConsoleTool)
 		];
 }
 

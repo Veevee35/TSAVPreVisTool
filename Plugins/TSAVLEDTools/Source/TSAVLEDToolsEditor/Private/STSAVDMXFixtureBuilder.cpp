@@ -38,6 +38,9 @@
 #include "InterchangeGenericMeshPipeline.h"
 #include "InterchangeManager.h"
 #include "InterchangeProjectSettings.h"
+#include "IO/DMXInputPort.h"
+#include "IO/DMXOutputPort.h"
+#include "IO/DMXPortManager.h"
 #include "LevelEditorViewport.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
@@ -54,6 +57,7 @@
 #include "Styling/AppStyle.h"
 #include "TSAVDMXFixture.h"
 #include "TSAVDMXFixtureCatalog.h"
+#include "UObject/UnrealType.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SComboBox.h"
@@ -88,6 +92,39 @@ namespace TSAVDMXFixtureBuilder::Private
 		Result.ReplaceInline(TEXT("-"), TEXT(""));
 		Result.ReplaceInline(TEXT(" "), TEXT(""));
 		return Result;
+	}
+
+	bool ConfigureLibraryPorts(UDMXLibrary& Library)
+	{
+		FStructProperty* PortReferencesProperty = FindFProperty<FStructProperty>(
+			UDMXLibrary::StaticClass(), UDMXLibrary::GetPortReferencesPropertyName());
+		FDMXLibraryPortReferences* PortReferences = PortReferencesProperty
+			? PortReferencesProperty->ContainerPtrToValuePtr<FDMXLibraryPortReferences>(&Library)
+			: nullptr;
+		if (!PortReferences)
+		{
+			return false;
+		}
+
+		const TArray<FDMXInputPortSharedRef>& InputPorts = FDMXPortManager::Get().GetInputPorts();
+		const TArray<FDMXOutputPortSharedRef>& OutputPorts = FDMXPortManager::Get().GetOutputPorts();
+		if (InputPorts.IsEmpty() || OutputPorts.IsEmpty())
+		{
+			return false;
+		}
+
+		PortReferences->InputPortReferences.Reset(InputPorts.Num());
+		for (const FDMXInputPortSharedRef& Port : InputPorts)
+		{
+			PortReferences->InputPortReferences.Emplace(Port->GetPortGuid(), true);
+		}
+		PortReferences->OutputPortReferences.Reset(OutputPorts.Num());
+		for (const FDMXOutputPortSharedRef& Port : OutputPorts)
+		{
+			PortReferences->OutputPortReferences.Emplace(Port->GetPortGuid(), true);
+		}
+		Library.UpdatePorts();
+		return true;
 	}
 
 	EFixtureMeshRole GetMeshRole(const UE::DMX::GDTF::FDMXGDTFModel& Model)
@@ -2049,6 +2086,12 @@ bool STSAVDMXFixtureBuilder::BuildCompleteFixtureLibrary(FString& OutSummary)
 			}
 		}
 	}
+	if (!TSAVDMXFixtureBuilder::Private::ConfigureLibraryPorts(*Library))
+	{
+		OutSummary = TEXT("The master fixture library could not be connected to the project DMX input/output ports.");
+		UE_LOG(LogTSAVGDTFBatch, Error, TEXT("%s"), *OutSummary);
+		return false;
+	}
 
 	UPackage* CatalogPackage = CreatePackage(*CatalogPackageName);
 	UTSAVDMXFixtureCatalog* Catalog = FindObject<UTSAVDMXFixtureCatalog>(CatalogPackage, *CatalogAssetName);
@@ -2359,6 +2402,31 @@ bool STSAVDMXFixtureBuilder::BuildCompleteFixtureLibrary(FString& OutSummary)
 		}
 		return false;
 	};
+	auto NormalizePatchAddresses = [&Catalog, &Library, &NextUniverse]()
+	{
+		int32 NormalizedUniverse = 1;
+		int32 NormalizedAddress = 1;
+		for (FTSAVDMXFixtureDefinition& Definition : Catalog->Fixtures)
+		{
+			if (UDMXEntityFixturePatch* Patch = Cast<UDMXEntityFixturePatch>(Library->FindEntity(Definition.FixturePatchId)))
+			{
+				Patch->RebuildCache();
+				const int32 Span = FMath::Clamp(Patch->GetChannelSpan(), 1, 512);
+				if (NormalizedAddress + Span - 1 > 512)
+				{
+					++NormalizedUniverse;
+					NormalizedAddress = 1;
+				}
+				Patch->SetUniverseID(NormalizedUniverse);
+				Patch->SetStartingChannel(NormalizedAddress);
+				Definition.Universe = NormalizedUniverse;
+				Definition.Address = NormalizedAddress;
+				Definition.ChannelSpan = Span;
+				NormalizedAddress += Span;
+			}
+		}
+		NextUniverse = NormalizedUniverse;
+	};
 
 	for (FTSAVDMXFixtureDefinition& Definition : Catalog->Fixtures)
 	{
@@ -2378,6 +2446,7 @@ bool STSAVDMXFixtureBuilder::BuildCompleteFixtureLibrary(FString& OutSummary)
 			Definition.ChannelSpan = FMath::Clamp(FinalPatch->GetChannelSpan(), 1, 512);
 		}
 	}
+	NormalizePatchAddresses();
 
 	Library->MarkPackageDirty();
 	Catalog->MarkPackageDirty();
@@ -2405,8 +2474,10 @@ bool STSAVDMXFixtureBuilder::BuildCompleteFixtureLibrary(FString& OutSummary)
 			Definition.ChannelSpan = FMath::Clamp(FinalPatch->GetChannelSpan(), 1, 512);
 		}
 	}
+	NormalizePatchAddresses();
+	Library->MarkPackageDirty();
 	Catalog->MarkPackageDirty();
-	bSaved = UEditorLoadingAndSavingUtils::SavePackages({ CatalogPackage }, true) && bSaved;
+	bSaved = UEditorLoadingAndSavingUtils::SavePackages({ LibraryPackage, CatalogPackage }, true) && bSaved;
 	const bool bComplete = bSaved && NumFailures == 0 && Catalog->Fixtures.Num() == ExpectedFixtureCount;
 	OutSummary = FString::Printf(
 		TEXT("Built %d/%d fixtures across %d DMX universes; %d use imported embedded models, %d use GDTF primitive/fallback parts, %d mesh references were finalized, %d use safe-mode recovery, including invalid profiles; failures=%d; saved=%s."),

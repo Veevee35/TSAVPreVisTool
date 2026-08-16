@@ -17,10 +17,14 @@ private:
 	void RegisterMenus();
 	void OpenCameraToolTab();
 	void OpenCameraControllerToolTab();
+	void OpenDMXPatchToolTab();
+	void OpenLightingConsoleToolTab();
 	void OpenScreenControlToolTab();
 	void OpenVideoSwitcherToolTab();
 	TSharedRef<SDockTab> SpawnCameraToolTab(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnCameraControllerToolTab(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnDMXPatchToolTab(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnLightingConsoleToolTab(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnScreenControlToolTab(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnVideoSwitcherToolTab(const FSpawnTabArgs& Args);
 };
