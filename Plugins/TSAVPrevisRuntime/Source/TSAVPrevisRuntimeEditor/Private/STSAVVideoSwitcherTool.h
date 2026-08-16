@@ -33,6 +33,7 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	virtual void Tick(const FGeometry& AllottedGeometry, double InCurrentTime, float InDeltaTime) override;
 
 private:
 	using FSwitcherOption = TWeakObjectPtr<ATSAVVideoSwitcher>;
@@ -79,4 +80,5 @@ private:
 	TSharedPtr<IDetailsView> DetailsView;
 	FText StatusText;
 	bool bStatusSuccess = true;
+	double NextInputSyncTime = 0.0;
 };

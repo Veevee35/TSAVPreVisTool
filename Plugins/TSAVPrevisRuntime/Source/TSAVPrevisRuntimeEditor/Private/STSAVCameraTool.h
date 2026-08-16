@@ -6,10 +6,10 @@
 #include "Video/TSAVCameraActor.h"
 #include "Widgets/SCompoundWidget.h"
 
-class IDetailsView;
+class SEditableTextBox;
 template <typename OptionType> class SComboBox;
 
-/** Editor-facing production camera creation and configuration panel. */
+/** Focused editor form that creates a configured, switcher-routable camera input. */
 class STSAVCameraTool final : public SCompoundWidget
 {
 public:
@@ -19,27 +19,26 @@ public:
 	void Construct(const FArguments& InArgs);
 
 private:
-	using FCameraOption = TWeakObjectPtr<ATSAVCameraActor>;
+	using FLensOption = ETSAVLensPreset;
 
-	void RefreshCameraOptions();
-	void SetActiveCamera(ATSAVCameraActor* Camera);
-	ATSAVCameraActor* FindSelectedCamera() const;
-	TSharedRef<SWidget> GenerateCameraOption(TSharedPtr<FCameraOption> Item) const;
-	void CameraOptionChanged(TSharedPtr<FCameraOption> Item, ESelectInfo::Type SelectionType);
-	FText GetActiveCameraText() const;
+	void PopulateLensOptions();
+	TSharedRef<SWidget> GenerateLensOption(TSharedPtr<FLensOption> Item) const;
+	void LensOptionChanged(TSharedPtr<FLensOption> Item, ESelectInfo::Type SelectionType);
+	FText GetSelectedLensText() const;
 	FText GetStatusText() const { return StatusText; }
 	FSlateColor GetStatusColor() const;
-	FReply CreateCameraFromView();
-	FReply UseSelectedCamera();
-	FReply RefreshCameras();
-	FReply SnapCameraToView();
-	FReply SelectCameraInLevel();
+	FReply CreateCameraInput();
+	FString MakeDefaultCameraName() const;
 	void SetStatus(const FText& Message, bool bSuccess);
 
-	TWeakObjectPtr<ATSAVCameraActor> ActiveCamera;
-	TArray<TSharedPtr<FCameraOption>> CameraOptions;
-	TSharedPtr<SComboBox<TSharedPtr<FCameraOption>>> CameraCombo;
-	TSharedPtr<IDetailsView> DetailsView;
+	FString CameraName;
+	int32 OutputWidth = 1920;
+	int32 OutputHeight = 1080;
+	bool bIsPTZ = false;
+	ETSAVLensPreset LensPreset = ETSAVLensPreset::BroadcastZoom;
+	TArray<TSharedPtr<FLensOption>> LensOptions;
+	TSharedPtr<SComboBox<TSharedPtr<FLensOption>>> LensCombo;
+	TSharedPtr<SEditableTextBox> CameraNameField;
 	FText StatusText;
 	bool bStatusSuccess = true;
 };

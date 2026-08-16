@@ -309,6 +309,34 @@ void STSAVVideoSwitcherTool::Construct(const FArguments& InArgs)
 	}
 }
 
+void STSAVVideoSwitcherTool::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+{
+	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
+	if (InCurrentTime < NextInputSyncTime)
+	{
+		return;
+	}
+	NextInputSyncTime = InCurrentTime + 0.5;
+
+	const ATSAVVideoSwitcher* Switcher = ActiveSwitcher.Get();
+	if (!Switcher)
+	{
+		return;
+	}
+	bool bInputListChanged = Switcher->Inputs.Num() != InputItems.Num();
+	for (int32 Index = 0; !bInputListChanged && Index < Switcher->Inputs.Num(); ++Index)
+	{
+		bInputListChanged = !InputItems.IsValidIndex(Index)
+			|| InputItems[Index]->InputId != Switcher->Inputs[Index].InputId
+			|| !InputItems[Index]->Label.EqualTo(Switcher->Inputs[Index].Label);
+	}
+	if (bInputListChanged)
+	{
+		RebuildInputList();
+		RebuildSurfaceList();
+	}
+}
+
 void STSAVVideoSwitcherTool::RefreshSwitcherOptions()
 {
 	SwitcherOptions.Reset();
