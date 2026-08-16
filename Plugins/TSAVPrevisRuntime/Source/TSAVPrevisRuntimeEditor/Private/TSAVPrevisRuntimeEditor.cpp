@@ -4,6 +4,7 @@
 
 #include "Framework/Application/SlateApplication.h"
 #include "STSAVCameraTool.h"
+#include "STSAVScreenControlTool.h"
 #include "STSAVVideoSwitcherTool.h"
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
@@ -14,6 +15,7 @@
 namespace TSAVPrevisRuntimeEditor
 {
 	const FName CameraToolTabName(TEXT("TSAVCameraTool"));
+	const FName ScreenControlToolTabName(TEXT("TSAVScreenControlTool"));
 	const FName VideoSwitcherToolTabName(TEXT("TSAVVideoSwitcherTool"));
 }
 
@@ -25,6 +27,14 @@ void FTSAVPrevisRuntimeEditorModule::StartupModule()
 		.SetDisplayName(LOCTEXT("CameraToolTabTitle", "TSAV Camera Tool"))
 		.SetTooltipText(LOCTEXT("CameraToolTabTooltip", "Create and configure production, cinema, virtual, and VISCA PTZ cameras."))
 		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.CameraActor")))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		TSAVPrevisRuntimeEditor::ScreenControlToolTabName,
+		FOnSpawnTab::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::SpawnScreenControlToolTab))
+		.SetDisplayName(LOCTEXT("ScreenControlToolTabTitle", "TSAV Screen Control"))
+		.SetTooltipText(LOCTEXT("ScreenControlToolTabTooltip", "Edit screen names, brightness, canvas origins, locations, and rotations."))
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.TextureRenderTarget2D")))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
@@ -47,6 +57,7 @@ void FTSAVPrevisRuntimeEditorModule::ShutdownModule()
 	if (FSlateApplication::IsInitialized())
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::CameraToolTabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::ScreenControlToolTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::VideoSwitcherToolTabName);
 	}
 }
@@ -63,6 +74,12 @@ void FTSAVPrevisRuntimeEditorModule::RegisterMenus()
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.CameraActor")),
 		FUIAction(FExecuteAction::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::OpenCameraToolTab)));
 	Section.AddMenuEntry(
+		TEXT("OpenTSAVScreenControlTool"),
+		LOCTEXT("OpenScreenControlToolLabel", "TSAV Screen Control"),
+		LOCTEXT("OpenScreenControlToolTooltip", "Edit every LED wall or panel's name, brightness, canvas start, physical location, and rotation."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.TextureRenderTarget2D")),
+		FUIAction(FExecuteAction::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::OpenScreenControlToolTab)));
+	Section.AddMenuEntry(
 		TEXT("OpenTSAVVideoSwitcherTool"),
 		LOCTEXT("OpenVideoSwitcherToolLabel", "TSAV Video Switcher"),
 		LOCTEXT("OpenVideoSwitcherToolTooltip", "Create a switcher, refresh visible inputs, and route Program, Preview, and Aux buses."),
@@ -73,6 +90,11 @@ void FTSAVPrevisRuntimeEditorModule::RegisterMenus()
 void FTSAVPrevisRuntimeEditorModule::OpenCameraToolTab()
 {
 	FGlobalTabmanager::Get()->TryInvokeTab(TSAVPrevisRuntimeEditor::CameraToolTabName);
+}
+
+void FTSAVPrevisRuntimeEditorModule::OpenScreenControlToolTab()
+{
+	FGlobalTabmanager::Get()->TryInvokeTab(TSAVPrevisRuntimeEditor::ScreenControlToolTabName);
 }
 
 void FTSAVPrevisRuntimeEditorModule::OpenVideoSwitcherToolTab()
@@ -86,6 +108,15 @@ TSharedRef<SDockTab> FTSAVPrevisRuntimeEditorModule::SpawnCameraToolTab(const FS
 		.TabRole(ETabRole::NomadTab)
 		[
 			SNew(STSAVCameraTool)
+		];
+}
+
+TSharedRef<SDockTab> FTSAVPrevisRuntimeEditorModule::SpawnScreenControlToolTab(const FSpawnTabArgs& Args)
+{
+	return SNew(SDockTab)
+		.TabRole(ETabRole::NomadTab)
+		[
+			SNew(STSAVScreenControlTool)
 		];
 }
 

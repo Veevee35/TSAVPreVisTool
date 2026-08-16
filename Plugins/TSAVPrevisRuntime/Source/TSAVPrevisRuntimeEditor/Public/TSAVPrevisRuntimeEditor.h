@@ -16,7 +16,9 @@ public:
 private:
 	void RegisterMenus();
 	void OpenCameraToolTab();
+	void OpenScreenControlToolTab();
 	void OpenVideoSwitcherToolTab();
 	TSharedRef<SDockTab> SpawnCameraToolTab(const FSpawnTabArgs& Args);
+	TSharedRef<SDockTab> SpawnScreenControlToolTab(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnVideoSwitcherToolTab(const FSpawnTabArgs& Args);
 };
