@@ -135,6 +135,19 @@ void ATSAVCameraActor::SetLens(const float NewFocalLengthMm, const float NewAper
 	ApplyCameraConfiguration();
 }
 
+bool ATSAVCameraActor::ApplyImageControls(
+	const float NewAperture,
+	const float NewFocusDistanceCm,
+	const float NewGainDb,
+	const bool bSendVisca)
+{
+	Aperture = FMath::Clamp(NewAperture, 0.7f, 64.0f);
+	FocusDistanceCm = FMath::Clamp(NewFocusDistanceCm, 1.0f, 1000000.0f);
+	GainDb = FMath::Clamp(NewGainDb, -12.0f, 36.0f);
+	ApplyCameraConfiguration();
+	return !bSendVisca || (bEnableViscaOverIp && SendViscaImageControls());
+}
+
 void ATSAVCameraActor::ApplyCameraConfiguration()
 {
 	if (!CineCamera || !SceneCapture)
@@ -168,7 +181,14 @@ void ATSAVCameraActor::ApplyCameraConfiguration()
 	Focus.FocusMethod = ECameraFocusMethod::Manual;
 	Focus.ManualFocusDistance = FocusDistanceCm;
 	CineCamera->SetFocusSettings(Focus);
+	const float ExposureCompensation = GainDb / 6.0206f;
+	CineCamera->PostProcessSettings.bOverride_AutoExposureBias = true;
+	CineCamera->PostProcessSettings.AutoExposureBias = ExposureCompensation;
+	CineCamera->PostProcessBlendWeight = 1.0f;
 	SceneCapture->FOVAngle = CineCamera->GetHorizontalFieldOfView();
+	SceneCapture->PostProcessSettings.bOverride_AutoExposureBias = true;
+	SceneCapture->PostProcessSettings.AutoExposureBias = ExposureCompensation;
+	SceneCapture->PostProcessBlendWeight = 1.0f;
 	SceneCapture->SetVisibility(bEnableVideoOutput);
 	SceneCapture->SetComponentTickEnabled(bEnableVideoOutput);
 	UpdateRenderTarget();
@@ -254,6 +274,62 @@ bool ATSAVCameraActor::SendViscaZoom()
 		static_cast<uint8>((Position >> 12) & 0x0f), static_cast<uint8>((Position >> 8) & 0x0f),
 		static_cast<uint8>((Position >> 4) & 0x0f), static_cast<uint8>(Position & 0x0f), 0xff };
 	return SendViscaPayload(Payload);
+}
+
+bool ATSAVCameraActor::SendViscaIris()
+{
+	// Standard VISCA iris direct positions run from closed (0x00) to open (0x11).
+	const int32 Position = FMath::RoundToInt(FMath::GetMappedRangeValueClamped(
+		FVector2D(1.6, 22.0), FVector2D(0x11, 0x01), Aperture));
+	return SendViscaPayload({
+		0x81, 0x01, 0x04, 0x4b, 0x00, 0x00,
+		static_cast<uint8>((Position >> 4) & 0x0f), static_cast<uint8>(Position & 0x0f), 0xff });
+}
+
+bool ATSAVCameraActor::SendViscaFocus()
+{
+	// Focus encoders are camera-specific; use the common four-nibble direct range
+	// with a logarithmic distance mapping for useful near/far control.
+	const float NormalizedDistance = FMath::GetMappedRangeValueClamped(
+		FVector2D(FMath::Loge(10.0), FMath::Loge(100000.0)), FVector2D(0.0, 1.0),
+		FMath::Loge(FMath::Clamp(FocusDistanceCm, 10.0f, 100000.0f)));
+	const int32 Position = FMath::RoundToInt(FMath::Lerp(4096.0f, 57344.0f, NormalizedDistance));
+	return SendViscaPayload({
+		0x81, 0x01, 0x04, 0x48,
+		static_cast<uint8>((Position >> 12) & 0x0f), static_cast<uint8>((Position >> 8) & 0x0f),
+		static_cast<uint8>((Position >> 4) & 0x0f), static_cast<uint8>(Position & 0x0f), 0xff });
+}
+
+bool ATSAVCameraActor::SendViscaGain()
+{
+	const int32 Position = FMath::RoundToInt(FMath::GetMappedRangeValueClamped(
+		FVector2D(-12.0, 36.0), FVector2D(0x00, 0x0f), GainDb));
+	return SendViscaPayload({
+		0x81, 0x01, 0x04, 0x4c, 0x00, 0x00, 0x00,
+		static_cast<uint8>(Position & 0x0f), 0xff });
+}
+
+bool ATSAVCameraActor::SendViscaImageControls()
+{
+	if (!bEnableViscaOverIp)
+	{
+		return false;
+	}
+	const bool bIrisSent = SendViscaIris();
+	const bool bFocusSent = SendViscaFocus();
+	const bool bGainSent = SendViscaGain();
+	return bIrisSent && bFocusSent && bGainSent;
+}
+
+bool ATSAVCameraActor::SendViscaPtzControls()
+{
+	if (!bEnableViscaOverIp)
+	{
+		return false;
+	}
+	const bool bPanTiltSent = SendViscaPanTilt();
+	const bool bZoomSent = SendViscaZoom();
+	return bPanTiltSent && bZoomSent;
 }
 
 bool ATSAVCameraActor::SendViscaHome()
@@ -363,6 +439,7 @@ FString ATSAVCameraActor::CaptureTSAVState() const
 	Root->SetNumberField(TEXT("focalLength"), FocalLengthMm);
 	Root->SetNumberField(TEXT("aperture"), Aperture);
 	Root->SetNumberField(TEXT("focusDistance"), FocusDistanceCm);
+	Root->SetNumberField(TEXT("gainDb"), GainDb);
 	Root->SetNumberField(TEXT("outputWidth"), OutputResolution.X);
 	Root->SetNumberField(TEXT("outputHeight"), OutputResolution.Y);
 	Root->SetBoolField(TEXT("videoOutput"), bEnableVideoOutput);
@@ -393,6 +470,11 @@ bool ATSAVCameraActor::RestoreTSAVState(const FString& State)
 	FocalLengthMm = Root->GetNumberField(TEXT("focalLength"));
 	Aperture = Root->GetNumberField(TEXT("aperture"));
 	FocusDistanceCm = Root->GetNumberField(TEXT("focusDistance"));
+	double RestoredGainDb = GainDb;
+	if (Root->TryGetNumberField(TEXT("gainDb"), RestoredGainDb))
+	{
+		GainDb = RestoredGainDb;
+	}
 	OutputResolution.X = Root->GetIntegerField(TEXT("outputWidth"));
 	OutputResolution.Y = Root->GetIntegerField(TEXT("outputHeight"));
 	bEnableVideoOutput = Root->GetBoolField(TEXT("videoOutput"));

@@ -72,6 +72,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Camera|Lens", meta = (ClampMin = "1.0"))
 	float FocusDistanceCm = 1000.0f;
 
+	/** Electronic gain in decibels. The previs feed represents this as exposure compensation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Camera|Image", meta = (ClampMin = "-12.0", ClampMax = "36.0"))
+	float GainDb = 0.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Camera|Video Output")
 	FIntPoint OutputResolution = FIntPoint(1280, 720);
 
@@ -111,6 +115,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV Camera|Lens")
 	void SetLens(float NewFocalLengthMm, float NewAperture, float NewFocusDistanceCm);
 
+	/** Apply iris, manual focus, and gain to the previs feed and optionally send their VISCA direct commands. */
+	UFUNCTION(BlueprintCallable, Category = "TSAV Camera|Image")
+	bool ApplyImageControls(float NewAperture, float NewFocusDistanceCm, float NewGainDb, bool bSendVisca = true);
+
 	UFUNCTION(BlueprintCallable, Category = "TSAV Camera|PTZ")
 	void ApplyPTZ(float NewPanDegrees, float NewTiltDegrees, float NewZoomNormalized, bool bSendVisca = true);
 
@@ -119,6 +127,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "TSAV Camera|PTZ")
 	bool SendViscaStop();
+
+	UFUNCTION(BlueprintCallable, Category = "TSAV Camera|PTZ")
+	bool SendViscaPtzControls();
+
+	UFUNCTION(BlueprintCallable, Category = "TSAV Camera|PTZ")
+	bool SendViscaImageControls();
 
 	UFUNCTION(BlueprintPure, Category = "TSAV Camera|Components")
 	UCineCameraComponent* GetCineCameraComponent() const { return CineCamera; }
@@ -143,6 +157,9 @@ private:
 	bool SendViscaPayload(const TArray<uint8>& Payload);
 	bool SendViscaPanTilt();
 	bool SendViscaZoom();
+	bool SendViscaIris();
+	bool SendViscaFocus();
+	bool SendViscaGain();
 	void CloseViscaSocket();
 	static float GetPresetFocalLength(ETSAVLensPreset Preset);
 

@@ -138,6 +138,7 @@ namespace TSAVPhase2Validation::Private
 		CameraTwo->SetCameraType(ETSAVCameraType::PTZ);
 		CameraTwo->SetLensPreset(ETSAVLensPreset::PTZZoom);
 		CameraTwo->ApplyPTZ(25.0f, 10.0f, 0.45f, false);
+		CameraTwo->ApplyImageControls(4.0f, 2500.0f, 6.0f, false);
 		Commands->CommitAppliedActorState(CameraTwo, CameraTwoBefore, FText::FromString(TEXT("Configure Validation Camera")));
 		const FGuid CameraOneObjectId = CameraOne->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
 		const FGuid CameraTwoObjectId = CameraTwo->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
@@ -229,7 +230,9 @@ namespace TSAVPhase2Validation::Private
 		Switcher = Cast<ATSAVVideoSwitcher>(FindById(World, SwitcherObjectId));
 		RoutedWall = Cast<ATSAVLEDWall>(FindById(World, LEDWallId));
 		if (!Require(CameraOne && CameraTwo && Switcher && RoutedWall, TEXT("Persistent video tool restoration failed"))) { return; }
-		if (!Require(CameraTwo->CameraType == ETSAVCameraType::PTZ && FMath::IsNearlyEqual(CameraTwo->ZoomNormalized, 0.45f), TEXT("Persistent camera configuration failed"))) { return; }
+		if (!Require(CameraTwo->CameraType == ETSAVCameraType::PTZ && FMath::IsNearlyEqual(CameraTwo->ZoomNormalized, 0.45f) &&
+			FMath::IsNearlyEqual(CameraTwo->Aperture, 4.0f) && FMath::IsNearlyEqual(CameraTwo->FocusDistanceCm, 2500.0f) &&
+			FMath::IsNearlyEqual(CameraTwo->GainDb, 6.0f), TEXT("Persistent camera configuration failed"))) { return; }
 		if (!Require(RoutedWall->bUseVideoSwitcher && RoutedWall->GetVideoSwitcher() == Switcher, TEXT("Persistent surface route failed"))) { return; }
 		if (!Require(RoutedWall->Columns == 5 && RoutedWall->Rows == 3 && RoutedWall->ColumnInternalCurveEnabled.IsValidIndex(2) &&
 			RoutedWall->ColumnInternalCurveEnabled[2] && RoutedWall->GetPanelEdgeStyle(0, 0) == ETSAVLEDPanelEdgeStyle::DiagonalTopLeft &&
