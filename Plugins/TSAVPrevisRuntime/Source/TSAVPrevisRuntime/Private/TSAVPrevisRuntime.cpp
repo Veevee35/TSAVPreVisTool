@@ -8,6 +8,7 @@
 #include "Engine/Texture.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Interaction/TSAVCommandSubsystem.h"
 #include "Interaction/TSAVSceneObjectComponent.h"
@@ -18,6 +19,7 @@
 #include "Project/TSAVProjectSubsystem.h"
 #include "TSAVLEDWall.h"
 #include "TSAVVideoSwitcher.h"
+#include "UI/TSAVLEDWallConfiguratorWidget.h"
 #include "Video/TSAVCameraActor.h"
 
 #define LOCTEXT_NAMESPACE "FTSAVPrevisRuntimeModule"
@@ -169,6 +171,18 @@ namespace TSAVPhase2Validation::Private
 		RoutedWall->RebuildPanelLayout();
 		Commands->CommitAppliedActorState(RoutedWall, WallBefore, FText::FromString(TEXT("Configure Validation LED Wall")));
 		if (!Require(RoutedWall->GetWallResolutionPixels() == FIntPoint(800, 360), TEXT("Runtime LED configurator failed"))) { return; }
+		APlayerController* ValidationController = World->GetFirstPlayerController();
+		UTSAVLEDWallConfiguratorWidget* FullscreenConfigurator = ValidationController
+			? CreateWidget<UTSAVLEDWallConfiguratorWidget>(ValidationController) : nullptr;
+		if (!Require(FullscreenConfigurator != nullptr, TEXT("Full-screen LED configurator could not be created"))) { return; }
+		FullscreenConfigurator->OpenForWall(RoutedWall);
+		FullscreenConfigurator->AddToViewport(100);
+		FullscreenConfigurator->OpenForWall(RoutedWall);
+		if (!Require(FullscreenConfigurator->GetConfiguredWall() == RoutedWall && FullscreenConfigurator->GetPanelCellCount() == 15,
+			TEXT("Full-screen LED configurator did not load the complete cabinet grid"))) { return; }
+		if (!Require(FullscreenConfigurator->GetPanelDefinitionCount() > 0,
+			TEXT("Cooked LED cabinet definition library is unavailable in the full-screen configurator"))) { return; }
+		FullscreenConfigurator->CloseConfigurator();
 		if (!Require(LoadObject<UMaterialInterface>(nullptr, TEXT("/TSAVLEDTools/Materials/M_TSAV_LEDCanvasVideo.M_TSAV_LEDCanvasVideo")) != nullptr,
 			TEXT("Packaged LED video material missing"))) { return; }
 		if (!Require(LoadObject<UTexture>(nullptr, TEXT("/TSAVLEDTools/Subpixels/T_TSAV_Subpixel_RectangleRGB.T_TSAV_Subpixel_RectangleRGB")) != nullptr,
@@ -215,6 +229,8 @@ namespace TSAVPhase2Validation::Private
 			Switcher->Inputs.Num(), *Switcher->GetBusInputLabel(TEXT("Program")).ToString());
 		UE_LOG(LogTSAVPrevisRuntime, Display, TEXT("CODEX_TSAV_LED_RUNTIME_CONFIGURATOR_VIDEO_SUCCESS columns=%d rows=%d texture=%s"),
 			RoutedWall->Columns, RoutedWall->Rows, *GetNameSafe(RoutedWall->GetDisplayedVideoTexture()));
+		UE_LOG(LogTSAVPrevisRuntime, Display, TEXT("CODEX_TSAV_LED_FULLSCREEN_CONFIGURATOR_SUCCESS panels=%d presets=%d"),
+			RoutedWall->Columns * RoutedWall->Rows, FullscreenConfigurator->GetPanelDefinitionCount());
 	}
 
 	FAutoConsoleCommandWithWorld ValidationCommand(

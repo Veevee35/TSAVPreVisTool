@@ -22,6 +22,7 @@ class UComboBoxString;
 class UEditableTextBox;
 class UScrollBox;
 class UTextBlock;
+class UTSAVLEDWallConfiguratorWidget;
 class UVerticalBox;
 
 enum class ETSAVTopMenu : uint8
@@ -149,6 +150,9 @@ private:
 
 	UFUNCTION()
 	void LEDWallApplyPanelStyleClicked();
+
+	UFUNCTION()
+	void LEDWallOpenFullConfiguratorClicked();
 
 	UFUNCTION()
 	void CameraTypeChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
@@ -318,6 +322,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ATSAVLEDWall> ContextLEDWall;
+
+	/** Dedicated packaged-build LED authoring screen, kept separate from the narrow inspector. */
+	UPROPERTY(Transient)
+	TObjectPtr<UTSAVLEDWallConfiguratorWidget> LEDWallConfiguratorScreen;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ATSAVCameraActor> ContextCamera;

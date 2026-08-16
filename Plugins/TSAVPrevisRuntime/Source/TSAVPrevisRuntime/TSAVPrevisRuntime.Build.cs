@@ -29,6 +29,8 @@ public class TSAVPrevisRuntime : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AssetRegistry",
+				"MediaAssets",
 				"Slate",
 				"SlateCore",
 			}

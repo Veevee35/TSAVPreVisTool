@@ -41,6 +41,7 @@
 #include "TSAVVideoSwitcher.h"
 #include "Video/TSAVCameraActor.h"
 #include "UI/TSAVMenuButton.h"
+#include "UI/TSAVLEDWallConfiguratorWidget.h"
 #include "UI/TSAVOutlinerButton.h"
 #include "UI/TSAVSwitcherInputButton.h"
 
@@ -520,7 +521,7 @@ void UTSAVMainWidget::ToggleMenu(const ETSAVTopMenu Menu, const float LeftPositi
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuTruss", "Add Truss Segment"), ETSAVMenuAction::AddTrussSegment);
 		break;
 	case ETSAVTopMenu::LED:
-		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLEDWall", "Add / Configure LED Wall"), ETSAVMenuAction::AddLEDWall);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLEDWall", "Open LED Wall Configurator"), ETSAVMenuAction::AddLEDWall);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLEDPanel", "Add LED Panel"), ETSAVMenuAction::AddLEDPanel);
 		break;
 	case ETSAVTopMenu::Lighting:
@@ -654,10 +655,29 @@ void UTSAVMainWidget::ExecuteMenuAction(const ETSAVMenuAction Action)
 			NSLOCTEXT("TSAVPreVis", "NewTrussSegment", "Truss Segment"), ETSAVObjectType::Truss);
 		break;
 	case ETSAVMenuAction::AddLEDWall:
+	{
 		SetAppMode(ETSAVAppMode::LED);
-		SpawnAndSelect(ATSAVLEDWall::StaticClass(), MakePlacementTransform(),
-			NSLOCTEXT("TSAVPreVis", "NewLEDWall", "LED Wall"), ETSAVObjectType::LED);
+		ATSAVLEDWall* Wall = Cast<ATSAVLEDWall>(TSAVMainWidget::Private::GetSelectedActor(*this));
+		if (!Wall)
+		{
+			Wall = Cast<ATSAVLEDWall>(SpawnAndSelect(ATSAVLEDWall::StaticClass(), MakePlacementTransform(),
+				NSLOCTEXT("TSAVPreVis", "NewLEDWall", "LED Wall"), ETSAVObjectType::LED));
+		}
+		if (Wall && GetOwningPlayer())
+		{
+			if (!LEDWallConfiguratorScreen)
+			{
+				LEDWallConfiguratorScreen = CreateWidget<UTSAVLEDWallConfiguratorWidget>(GetOwningPlayer());
+			}
+			LEDWallConfiguratorScreen->OpenForWall(Wall);
+			if (!LEDWallConfiguratorScreen->IsInViewport())
+			{
+				LEDWallConfiguratorScreen->AddToViewport(100);
+				LEDWallConfiguratorScreen->OpenForWall(Wall);
+			}
+		}
 		break;
+	}
 	case ETSAVMenuAction::AddLEDPanel:
 		SetAppMode(ETSAVAppMode::LED);
 		SpawnAndSelect(ATSAVLEDPanel::StaticClass(), MakePlacementTransform(),
@@ -927,6 +947,10 @@ void UTSAVMainWidget::BuildContextTools(AActor* SelectedActor)
 	if (ContextLEDWall)
 	{
 		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, NSLOCTEXT("TSAVPreVis", "LEDConfiguratorHeader", "LED WALL CONFIGURATOR"), 13, AccentColor));
+		UButton* OpenFullConfigurator = CreateModeButton(*WidgetTree, NSLOCTEXT("TSAVPreVis", "OpenFullLEDConfigurator", "OPEN FULL LED WALL CONFIGURATOR"));
+		OpenFullConfigurator->SetBackgroundColor(AccentColor);
+		OpenFullConfigurator->OnClicked.AddDynamic(this, &UTSAVMainWidget::LEDWallOpenFullConfiguratorClicked);
+		ContextToolPanel->AddChildToVerticalBox(OpenFullConfigurator);
 		const FIntPoint WallResolution = ContextLEDWall->GetWallResolutionPixels();
 		ContextToolPanel->AddChildToVerticalBox(CreateText(*WidgetTree, FText::Format(
 			NSLOCTEXT("TSAVPreVis", "LEDWallSummary", "{0} x {1} cabinets  |  {2} x {3} px\n{4} cm wide  |  {5} cm high"),
@@ -1252,6 +1276,24 @@ void UTSAVMainWidget::LEDWallApplyPanelStyleClicked()
 	ContextLEDWall->RebuildPanelLayout();
 	CommitContextState(ContextLEDWall, Before, NSLOCTEXT("TSAVPreVis", "ShapeLEDCabinetCommand", "Shape LED Cabinet"));
 	BuildContextTools(ContextLEDWall);
+}
+
+void UTSAVMainWidget::LEDWallOpenFullConfiguratorClicked()
+{
+	if (!ContextLEDWall || !GetOwningPlayer())
+	{
+		return;
+	}
+	if (!LEDWallConfiguratorScreen)
+	{
+		LEDWallConfiguratorScreen = CreateWidget<UTSAVLEDWallConfiguratorWidget>(GetOwningPlayer());
+	}
+	LEDWallConfiguratorScreen->OpenForWall(ContextLEDWall);
+	if (!LEDWallConfiguratorScreen->IsInViewport())
+	{
+		LEDWallConfiguratorScreen->AddToViewport(100);
+		LEDWallConfiguratorScreen->OpenForWall(ContextLEDWall);
+	}
 }
 
 void UTSAVMainWidget::RouteContextSurface(const FName BusName)
