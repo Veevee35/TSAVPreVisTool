@@ -137,6 +137,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "TSAV Camera|Components")
 	UCineCameraComponent* GetCineCameraComponent() const { return CineCamera; }
 
+	UFUNCTION(BlueprintPure, Category = "TSAV Camera|Components")
+	USceneCaptureComponent2D* GetSceneCaptureComponent() const { return SceneCapture; }
+
 	virtual FGuid GetTSAVVideoSourceId() const override { return CameraId; }
 	virtual FText GetTSAVVideoSourceName() const override;
 	virtual UTexture* GetTSAVVideoTexture() const override;

@@ -58,6 +58,7 @@ ATSAVCameraActor::ATSAVCameraActor()
 	LensVisual->SetRelativeLocation(FVector(38.0f, 0.0f, 0.0f));
 	CineCamera->SetRelativeLocation(FVector(50.0f, 0.0f, 0.0f));
 	SceneCapture->SetRelativeLocation(FVector(50.0f, 0.0f, 0.0f));
+	SceneCapture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 	SceneCapture->bCaptureEveryFrame = true;
 	SceneCapture->bCaptureOnMovement = true;
 }
@@ -165,6 +166,13 @@ void ATSAVCameraActor::ApplyCameraConfiguration()
 	}
 	Filmback.SensorAspectRatio = Filmback.SensorWidth / FMath::Max(Filmback.SensorHeight, 0.01f);
 	CineCamera->SetFilmback(Filmback);
+	FCameraLensSettings LensSettings = CineCamera->LensSettings;
+	LensSettings.MinFocalLength = 1.0f;
+	LensSettings.MaxFocalLength = 2000.0f;
+	LensSettings.MinFStop = 0.7f;
+	LensSettings.MaxFStop = 64.0f;
+	LensSettings.MinimumFocusDistance = 10.0f;
+	CineCamera->SetLensSettings(LensSettings);
 	if (LensPreset != ETSAVLensPreset::Custom)
 	{
 		FocalLengthMm = GetPresetFocalLength(LensPreset);
@@ -181,18 +189,39 @@ void ATSAVCameraActor::ApplyCameraConfiguration()
 	Focus.FocusMethod = ECameraFocusMethod::Manual;
 	Focus.ManualFocusDistance = FocusDistanceCm;
 	CineCamera->SetFocusSettings(Focus);
-	const float ExposureCompensation = GainDb / 6.0206f;
-	CineCamera->PostProcessSettings.bOverride_AutoExposureBias = true;
-	CineCamera->PostProcessSettings.AutoExposureBias = ExposureCompensation;
+	const float SafeAperture = FMath::Clamp(Aperture, 0.7f, 64.0f);
+	const float IrisExposureCompensation = 2.0f * FMath::Log2(2.8f / SafeAperture);
+	const float GainExposureCompensation = GainDb / 6.0206f;
+	const float ExposureCompensation = FMath::Clamp(
+		IrisExposureCompensation + GainExposureCompensation, -15.0f, 15.0f);
+	auto ApplyOpticalPostProcess = [this, &Filmback, ExposureCompensation](FPostProcessSettings& Settings)
+	{
+		Settings.bOverride_AutoExposureBias = true;
+		Settings.AutoExposureBias = ExposureCompensation;
+		Settings.bOverride_DepthOfFieldEnabled = true;
+		Settings.DepthOfFieldEnabled = true;
+		Settings.bOverride_DepthOfFieldFocalDistance = true;
+		Settings.DepthOfFieldFocalDistance = FMath::Max(FocusDistanceCm, 1.0f);
+		Settings.bOverride_DepthOfFieldFstop = true;
+		Settings.DepthOfFieldFstop = FMath::Clamp(Aperture, 1.0f, 32.0f);
+		Settings.bOverride_DepthOfFieldMinFstop = true;
+		Settings.DepthOfFieldMinFstop = 0.7f;
+		Settings.bOverride_DepthOfFieldSensorWidth = true;
+		Settings.DepthOfFieldSensorWidth = FMath::Max(Filmback.SensorWidth, 0.1f);
+	};
+	ApplyOpticalPostProcess(CineCamera->PostProcessSettings);
 	CineCamera->PostProcessBlendWeight = 1.0f;
 	SceneCapture->FOVAngle = CineCamera->GetHorizontalFieldOfView();
-	SceneCapture->PostProcessSettings.bOverride_AutoExposureBias = true;
-	SceneCapture->PostProcessSettings.AutoExposureBias = ExposureCompensation;
+	ApplyOpticalPostProcess(SceneCapture->PostProcessSettings);
 	SceneCapture->PostProcessBlendWeight = 1.0f;
 	SceneCapture->SetVisibility(bEnableVideoOutput);
 	SceneCapture->SetComponentTickEnabled(bEnableVideoOutput);
 	UpdateRenderTarget();
 	ApplyPTZPreview();
+	if (bEnableVideoOutput && SceneCapture->IsRegistered())
+	{
+		SceneCapture->CaptureSceneDeferred();
+	}
 }
 
 void ATSAVCameraActor::UpdateRenderTarget()

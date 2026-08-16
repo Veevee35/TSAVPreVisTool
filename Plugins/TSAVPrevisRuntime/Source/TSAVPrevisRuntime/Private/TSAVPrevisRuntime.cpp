@@ -8,6 +8,7 @@
 #include "Engine/Texture.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 #include "Interaction/TSAVCommandSubsystem.h"
@@ -139,6 +140,15 @@ namespace TSAVPhase2Validation::Private
 		CameraTwo->SetLensPreset(ETSAVLensPreset::PTZZoom);
 		CameraTwo->ApplyPTZ(25.0f, 10.0f, 0.45f, false);
 		CameraTwo->ApplyImageControls(4.0f, 2500.0f, 6.0f, false);
+		const USceneCaptureComponent2D* CameraTwoCapture = CameraTwo->GetSceneCaptureComponent();
+		const float ExpectedCameraExposureBias = 2.0f * FMath::Log2(2.8f / 4.0f) + (6.0f / 6.0206f);
+		if (!Require(CameraTwoCapture && CameraTwoCapture->PostProcessSettings.bOverride_DepthOfFieldFocalDistance &&
+			CameraTwoCapture->PostProcessSettings.bOverride_DepthOfFieldFstop &&
+			CameraTwoCapture->PostProcessSettings.bOverride_AutoExposureBias &&
+			FMath::IsNearlyEqual(CameraTwoCapture->PostProcessSettings.DepthOfFieldFocalDistance, 2500.0f) &&
+			FMath::IsNearlyEqual(CameraTwoCapture->PostProcessSettings.DepthOfFieldFstop, 4.0f) &&
+			FMath::IsNearlyEqual(CameraTwoCapture->PostProcessSettings.AutoExposureBias, ExpectedCameraExposureBias),
+			TEXT("Camera feed scene capture did not receive iris, focus, and gain settings"))) { return; }
 		Commands->CommitAppliedActorState(CameraTwo, CameraTwoBefore, FText::FromString(TEXT("Configure Validation Camera")));
 		const FGuid CameraOneObjectId = CameraOne->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
 		const FGuid CameraTwoObjectId = CameraTwo->FindComponentByClass<UTSAVSceneObjectComponent>()->ObjectId;
