@@ -7,6 +7,7 @@
 #include "Widgets/SCompoundWidget.h"
 
 class SEditableTextBox;
+class FScopedTransaction;
 template <typename OptionType> class SComboBox;
 
 /** Four-bank editor controller for TSAV cameras, including VISCA-over-IP PTZ output. */
@@ -17,9 +18,21 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	virtual ~STSAVCameraControllerTool() override;
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FTSAVCameraControllerWidgetConstructionTest;
+#endif
 	using FCameraOption = TWeakObjectPtr<ATSAVCameraActor>;
+	enum class ELiveControlGroup : uint8
+	{
+		PTZ,
+		Image,
+		Position,
+		Connection,
+		Metadata,
+	};
 
 	struct FCameraControlSlot
 	{
@@ -40,6 +53,7 @@ private:
 		int32 ViscaPort = 52381;
 		int32 ViscaPanSpeed = 12;
 		int32 ViscaTiltSpeed = 10;
+		double LastLiveViscaSendTime = 0.0;
 	};
 
 	TSharedRef<SWidget> BuildCameraBank(int32 SlotIndex);
@@ -50,6 +64,10 @@ private:
 	TSharedRef<SWidget> GenerateCameraOption(TSharedPtr<FCameraOption> Item) const;
 	FText GetSlotCameraText(int32 SlotIndex) const;
 	FText GetSlotSummaryText(int32 SlotIndex) const;
+	void BeginLiveControl(int32 SlotIndex);
+	void UpdateLiveControl(int32 SlotIndex, ELiveControlGroup Group, bool bFinalValue);
+	void EndLiveControl(int32 SlotIndex, ELiveControlGroup Group);
+	void CommitTypedControl(int32 SlotIndex, ELiveControlGroup Group);
 	bool ApplySlot(int32 SlotIndex, bool bSendVisca, bool bUpdateStatus = true);
 	FReply RefreshCameras();
 	FReply UseSelectedCameras();
@@ -66,6 +84,8 @@ private:
 
 	TArray<TSharedPtr<FCameraOption>> CameraOptions;
 	TArray<FCameraControlSlot> CameraSlots;
+	TUniquePtr<FScopedTransaction> ActiveLiveTransaction;
+	int32 ActiveLiveSlot = INDEX_NONE;
 	FText StatusText;
 	bool bStatusSuccess = true;
 };

@@ -6,6 +6,7 @@
 #include "Engine/Selection.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/AutomationTest.h"
 #include "ScopedTransaction.h"
 #include "Styling/AppStyle.h"
@@ -47,12 +48,21 @@ namespace TSAVCameraControllerTool::Private
 		return LOCTEXT("UnknownCameraType", "Unknown");
 	}
 
+	struct FLiveControlDelegates
+	{
+		FSimpleDelegate Begin;
+		FSimpleDelegate Changed;
+		FSimpleDelegate End;
+		FSimpleDelegate Committed;
+	};
+
 	TSharedRef<SWidget> MakeFloatControl(
 		float* Value,
 		const float InputMinimum,
 		const float InputMaximum,
 		const float SliderMinimum,
-		const float SliderMaximum)
+		const float SliderMaximum,
+		const FLiveControlDelegates Delegates)
 	{
 		return SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -61,14 +71,18 @@ namespace TSAVCameraControllerTool::Private
 			.VAlign(VAlign_Center)
 			[
 				SNew(SSlider)
+				.PreventThrottling(true)
+				.OnMouseCaptureBegin(Delegates.Begin)
+				.OnMouseCaptureEnd(Delegates.End)
 				.Value_Lambda([Value, SliderMinimum, SliderMaximum]()
 				{
 					return FMath::GetMappedRangeValueClamped(
 						FVector2D(SliderMinimum, SliderMaximum), FVector2D(0.0, 1.0), *Value);
 				})
-				.OnValueChanged_Lambda([Value, SliderMinimum, SliderMaximum](const float Normalized)
+				.OnValueChanged_Lambda([Value, SliderMinimum, SliderMaximum, Delegates](const float Normalized)
 				{
 					*Value = FMath::Lerp(SliderMinimum, SliderMaximum, Normalized);
+					Delegates.Changed.ExecuteIfBound();
 				})
 			]
 			+ SHorizontalBox::Slot()
@@ -81,19 +95,31 @@ namespace TSAVCameraControllerTool::Private
 					.MinValue(InputMinimum)
 					.MaxValue(InputMaximum)
 					.Value_Lambda([Value]() { return *Value; })
-					.OnValueChanged_Lambda([Value, InputMinimum, InputMaximum](const float NewValue)
+					.OnBeginSliderMovement(Delegates.Begin)
+					.OnEndSliderMovement_Lambda([Value, InputMinimum, InputMaximum, Delegates](const float NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+						Delegates.End.ExecuteIfBound();
 					})
-					.OnValueCommitted_Lambda([Value, InputMinimum, InputMaximum](const float NewValue, ETextCommit::Type)
+					.OnValueChanged_Lambda([Value, InputMinimum, InputMaximum, Delegates](const float NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+						Delegates.Changed.ExecuteIfBound();
+					})
+					.OnValueCommitted_Lambda([Value, InputMinimum, InputMaximum, Delegates](const float NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+						Delegates.Committed.ExecuteIfBound();
 					})
 				]
 			];
 	}
 
-	TSharedRef<SWidget> MakeLogFloatControl(float* Value, const float Minimum, const float Maximum)
+	TSharedRef<SWidget> MakeLogFloatControl(
+		float* Value,
+		const float Minimum,
+		const float Maximum,
+		const FLiveControlDelegates Delegates)
 	{
 		const float LogMinimum = FMath::Loge(Minimum);
 		const float LogMaximum = FMath::Loge(Maximum);
@@ -104,15 +130,19 @@ namespace TSAVCameraControllerTool::Private
 			.VAlign(VAlign_Center)
 			[
 				SNew(SSlider)
+				.PreventThrottling(true)
+				.OnMouseCaptureBegin(Delegates.Begin)
+				.OnMouseCaptureEnd(Delegates.End)
 				.Value_Lambda([Value, LogMinimum, LogMaximum]()
 				{
 					return FMath::GetMappedRangeValueClamped(
 						FVector2D(LogMinimum, LogMaximum), FVector2D(0.0, 1.0),
 						FMath::Loge(FMath::Max(*Value, 1.0f)));
 				})
-				.OnValueChanged_Lambda([Value, LogMinimum, LogMaximum](const float Normalized)
+				.OnValueChanged_Lambda([Value, LogMinimum, LogMaximum, Delegates](const float Normalized)
 				{
 					*Value = FMath::Exp(FMath::Lerp(LogMinimum, LogMaximum, Normalized));
+					Delegates.Changed.ExecuteIfBound();
 				})
 			]
 			+ SHorizontalBox::Slot()
@@ -125,13 +155,21 @@ namespace TSAVCameraControllerTool::Private
 					.MinValue(Minimum)
 					.MaxValue(Maximum)
 					.Value_Lambda([Value]() { return *Value; })
-					.OnValueChanged_Lambda([Value, Minimum, Maximum](const float NewValue)
+					.OnBeginSliderMovement(Delegates.Begin)
+					.OnEndSliderMovement_Lambda([Value, Minimum, Maximum, Delegates](const float NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+						Delegates.End.ExecuteIfBound();
 					})
-					.OnValueCommitted_Lambda([Value, Minimum, Maximum](const float NewValue, ETextCommit::Type)
+					.OnValueChanged_Lambda([Value, Minimum, Maximum, Delegates](const float NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+						Delegates.Changed.ExecuteIfBound();
+					})
+					.OnValueCommitted_Lambda([Value, Minimum, Maximum, Delegates](const float NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+						Delegates.Committed.ExecuteIfBound();
 					})
 				]
 			];
@@ -142,7 +180,8 @@ namespace TSAVCameraControllerTool::Private
 		const double InputMinimum,
 		const double InputMaximum,
 		const double SliderMinimum,
-		const double SliderMaximum)
+		const double SliderMaximum,
+		const FLiveControlDelegates Delegates)
 	{
 		return SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -151,14 +190,18 @@ namespace TSAVCameraControllerTool::Private
 			.VAlign(VAlign_Center)
 			[
 				SNew(SSlider)
+				.PreventThrottling(true)
+				.OnMouseCaptureBegin(Delegates.Begin)
+				.OnMouseCaptureEnd(Delegates.End)
 				.Value_Lambda([Value, SliderMinimum, SliderMaximum]()
 				{
 					return static_cast<float>(FMath::GetMappedRangeValueClamped(
 						FVector2D(SliderMinimum, SliderMaximum), FVector2D(0.0, 1.0), *Value));
 				})
-				.OnValueChanged_Lambda([Value, SliderMinimum, SliderMaximum](const float Normalized)
+				.OnValueChanged_Lambda([Value, SliderMinimum, SliderMaximum, Delegates](const float Normalized)
 				{
 					*Value = FMath::Lerp(SliderMinimum, SliderMaximum, static_cast<double>(Normalized));
+					Delegates.Changed.ExecuteIfBound();
 				})
 			]
 			+ SHorizontalBox::Slot()
@@ -171,19 +214,31 @@ namespace TSAVCameraControllerTool::Private
 					.MinValue(InputMinimum)
 					.MaxValue(InputMaximum)
 					.Value_Lambda([Value]() { return *Value; })
-					.OnValueChanged_Lambda([Value, InputMinimum, InputMaximum](const double NewValue)
+					.OnBeginSliderMovement(Delegates.Begin)
+					.OnEndSliderMovement_Lambda([Value, InputMinimum, InputMaximum, Delegates](const double NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+						Delegates.End.ExecuteIfBound();
 					})
-					.OnValueCommitted_Lambda([Value, InputMinimum, InputMaximum](const double NewValue, ETextCommit::Type)
+					.OnValueChanged_Lambda([Value, InputMinimum, InputMaximum, Delegates](const double NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+						Delegates.Changed.ExecuteIfBound();
+					})
+					.OnValueCommitted_Lambda([Value, InputMinimum, InputMaximum, Delegates](const double NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+						Delegates.Committed.ExecuteIfBound();
 					})
 				]
 			];
 	}
 
-	TSharedRef<SWidget> MakeIntControl(int32* Value, const int32 Minimum, const int32 Maximum)
+	TSharedRef<SWidget> MakeIntControl(
+		int32* Value,
+		const int32 Minimum,
+		const int32 Maximum,
+		const FLiveControlDelegates Delegates)
 	{
 		return SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -192,14 +247,18 @@ namespace TSAVCameraControllerTool::Private
 			.VAlign(VAlign_Center)
 			[
 				SNew(SSlider)
+				.PreventThrottling(true)
+				.OnMouseCaptureBegin(Delegates.Begin)
+				.OnMouseCaptureEnd(Delegates.End)
 				.Value_Lambda([Value, Minimum, Maximum]()
 				{
 					return FMath::GetMappedRangeValueClamped(
 						FVector2D(Minimum, Maximum), FVector2D(0.0, 1.0), *Value);
 				})
-				.OnValueChanged_Lambda([Value, Minimum, Maximum](const float Normalized)
+				.OnValueChanged_Lambda([Value, Minimum, Maximum, Delegates](const float Normalized)
 				{
 					*Value = FMath::RoundToInt(FMath::Lerp(static_cast<float>(Minimum), static_cast<float>(Maximum), Normalized));
+					Delegates.Changed.ExecuteIfBound();
 				})
 			]
 			+ SHorizontalBox::Slot()
@@ -212,17 +271,30 @@ namespace TSAVCameraControllerTool::Private
 					.MinValue(Minimum)
 					.MaxValue(Maximum)
 					.Value_Lambda([Value]() { return *Value; })
-					.OnValueChanged_Lambda([Value, Minimum, Maximum](const int32 NewValue)
+					.OnBeginSliderMovement(Delegates.Begin)
+					.OnEndSliderMovement_Lambda([Value, Minimum, Maximum, Delegates](const int32 NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+						Delegates.End.ExecuteIfBound();
 					})
-					.OnValueCommitted_Lambda([Value, Minimum, Maximum](const int32 NewValue, ETextCommit::Type)
+					.OnValueChanged_Lambda([Value, Minimum, Maximum, Delegates](const int32 NewValue)
 					{
 						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+						Delegates.Changed.ExecuteIfBound();
+					})
+					.OnValueCommitted_Lambda([Value, Minimum, Maximum, Delegates](const int32 NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+						Delegates.Committed.ExecuteIfBound();
 					})
 				]
 			];
 	}
+}
+
+STSAVCameraControllerTool::~STSAVCameraControllerTool()
+{
+	ActiveLiveTransaction.Reset();
 }
 
 void STSAVCameraControllerTool::Construct(const FArguments& InArgs)
@@ -249,7 +321,7 @@ void STSAVCameraControllerTool::Construct(const FArguments& InArgs)
 			.Padding(0.0f, 0.0f, 0.0f, 10.0f)
 			[
 				SNew(STextBlock)
-				.Text(LOCTEXT("Description", "Assign up to four cameras. Each bank keeps independent controls and VISCA settings; every numeric property has a slider and a typeable value."))
+				.Text(LOCTEXT("Description", "Assign up to four cameras. Sliders update the Unreal camera live; VISCA-enabled banks send rate-limited live moves and a final exact value on release. Typed values apply when committed."))
 				.AutoWrapText(true)
 			]
 			+ SVerticalBox::Slot()
@@ -276,14 +348,14 @@ void STSAVCameraControllerTool::Construct(const FArguments& InArgs)
 				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("ApplyAllPreview", "APPLY ALL PREVIEWS"))
+					.Text(LOCTEXT("ApplyAllPreview", "SYNC ALL NOW"))
 					.IsEnabled_Lambda([this]() { return GetAssignedCameraCount() > 0; })
 					.OnClicked(this, &STSAVCameraControllerTool::ApplyAllPreviews)
 				]
 				+ SHorizontalBox::Slot().AutoWidth()
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("ApplyAllVisca", "APPLY + SEND ALL VISCA"))
+					.Text(LOCTEXT("ApplyAllVisca", "SEND ALL CURRENT"))
 					.IsEnabled_Lambda([this]() { return GetAssignedCameraCount() > 0; })
 					.OnClicked(this, &STSAVCameraControllerTool::ApplyAllAndSend)
 				]
@@ -323,6 +395,15 @@ TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotI
 	auto Label = [](const FText& Text) -> TSharedRef<SWidget>
 	{
 		return SNew(STextBlock).Text(Text);
+	};
+	auto LiveDelegates = [this, SlotIndex](const ELiveControlGroup Group)
+	{
+		TSAVCameraControllerTool::Private::FLiveControlDelegates Delegates;
+		Delegates.Begin = FSimpleDelegate::CreateLambda([this, SlotIndex]() { BeginLiveControl(SlotIndex); });
+		Delegates.Changed = FSimpleDelegate::CreateLambda([this, SlotIndex, Group]() { UpdateLiveControl(SlotIndex, Group, false); });
+		Delegates.End = FSimpleDelegate::CreateLambda([this, SlotIndex, Group]() { EndLiveControl(SlotIndex, Group); });
+		Delegates.Committed = FSimpleDelegate::CreateLambda([this, SlotIndex, Group]() { CommitTypedControl(SlotIndex, Group); });
+		return Delegates;
 	};
 
 	return SNew(SBorder)
@@ -376,25 +457,26 @@ TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotI
 				[
 					SAssignNew(Slot.CameraNameField, SEditableTextBox)
 					.OnTextChanged_Lambda([this, SlotIndex](const FText& Text) { CameraSlots[SlotIndex].CameraName = Text.ToString(); })
+					.OnTextCommitted_Lambda([this, SlotIndex](const FText&, ETextCommit::Type) { CommitTypedControl(SlotIndex, ELiveControlGroup::Metadata); })
 				]
 				+ SGridPanel::Slot(0, 1).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PanLabel", "PAN (DEG)"))]
-				+ SGridPanel::Slot(1, 1).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.PanDegrees, -170.0f, 170.0f, -170.0f, 170.0f)]
+				+ SGridPanel::Slot(1, 1).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.PanDegrees, -170.0f, 170.0f, -170.0f, 170.0f, LiveDelegates(ELiveControlGroup::PTZ))]
 				+ SGridPanel::Slot(0, 2).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("TiltLabel", "TILT (DEG)"))]
-				+ SGridPanel::Slot(1, 2).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.TiltDegrees, -30.0f, 90.0f, -30.0f, 90.0f)]
+				+ SGridPanel::Slot(1, 2).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.TiltDegrees, -30.0f, 90.0f, -30.0f, 90.0f, LiveDelegates(ELiveControlGroup::PTZ))]
 				+ SGridPanel::Slot(0, 3).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("ZoomLabel", "ZOOM (%)"))]
-				+ SGridPanel::Slot(1, 3).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.ZoomPercent, 0.0f, 100.0f, 0.0f, 100.0f)]
+				+ SGridPanel::Slot(1, 3).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.ZoomPercent, 0.0f, 100.0f, 0.0f, 100.0f, LiveDelegates(ELiveControlGroup::PTZ))]
 				+ SGridPanel::Slot(0, 4).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("IrisLabel", "IRIS (F)"))]
-				+ SGridPanel::Slot(1, 4).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.Iris, 0.7f, 64.0f, 0.7f, 22.0f)]
+				+ SGridPanel::Slot(1, 4).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.Iris, 0.7f, 64.0f, 0.7f, 22.0f, LiveDelegates(ELiveControlGroup::Image))]
 				+ SGridPanel::Slot(0, 5).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("FocusLabel", "FOCUS (CM)"))]
-				+ SGridPanel::Slot(1, 5).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeLogFloatControl(&Slot.FocusDistanceCm, 1.0f, 1000000.0f)]
+				+ SGridPanel::Slot(1, 5).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeLogFloatControl(&Slot.FocusDistanceCm, 1.0f, 1000000.0f, LiveDelegates(ELiveControlGroup::Image))]
 				+ SGridPanel::Slot(0, 6).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("GainLabel", "GAIN (DB)"))]
-				+ SGridPanel::Slot(1, 6).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.GainDb, -12.0f, 36.0f, -12.0f, 36.0f)]
+				+ SGridPanel::Slot(1, 6).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.GainDb, -12.0f, 36.0f, -12.0f, 36.0f, LiveDelegates(ELiveControlGroup::Image))]
 				+ SGridPanel::Slot(0, 7).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PositionXLabel", "POSITION X"))]
-				+ SGridPanel::Slot(1, 7).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.X, -1000000.0, 1000000.0, -100000.0, 100000.0)]
+				+ SGridPanel::Slot(1, 7).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.X, -1000000.0, 1000000.0, -100000.0, 100000.0, LiveDelegates(ELiveControlGroup::Position))]
 				+ SGridPanel::Slot(0, 8).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PositionYLabel", "POSITION Y"))]
-				+ SGridPanel::Slot(1, 8).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.Y, -1000000.0, 1000000.0, -100000.0, 100000.0)]
+				+ SGridPanel::Slot(1, 8).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.Y, -1000000.0, 1000000.0, -100000.0, 100000.0, LiveDelegates(ELiveControlGroup::Position))]
 				+ SGridPanel::Slot(0, 9).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PositionZLabel", "POSITION Z"))]
-				+ SGridPanel::Slot(1, 9).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.Z, -1000000.0, 1000000.0, -100000.0, 100000.0)]
+				+ SGridPanel::Slot(1, 9).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.Z, -1000000.0, 1000000.0, -100000.0, 100000.0, LiveDelegates(ELiveControlGroup::Position))]
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f)
 			[
@@ -416,7 +498,11 @@ TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotI
 				[
 					SNew(SCheckBox)
 					.IsChecked_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].bViscaEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-					.OnCheckStateChanged_Lambda([this, SlotIndex](const ECheckBoxState State) { CameraSlots[SlotIndex].bViscaEnabled = State == ECheckBoxState::Checked; })
+					.OnCheckStateChanged_Lambda([this, SlotIndex](const ECheckBoxState State)
+					{
+						CameraSlots[SlotIndex].bViscaEnabled = State == ECheckBoxState::Checked;
+						CommitTypedControl(SlotIndex, ELiveControlGroup::Connection);
+					})
 					[
 						SNew(STextBlock).Text(LOCTEXT("ViscaUdp", "Sony VISCA UDP"))
 					]
@@ -426,13 +512,14 @@ TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotI
 				[
 					SAssignNew(Slot.ViscaIpField, SEditableTextBox)
 					.OnTextChanged_Lambda([this, SlotIndex](const FText& Text) { CameraSlots[SlotIndex].ViscaIpAddress = Text.ToString(); })
+					.OnTextCommitted_Lambda([this, SlotIndex](const FText&, ETextCommit::Type) { CommitTypedControl(SlotIndex, ELiveControlGroup::Connection); })
 				]
 				+ SGridPanel::Slot(0, 2).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("ViscaPortLabel", "UDP PORT"))]
-				+ SGridPanel::Slot(1, 2).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaPort, 1, 65535)]
+				+ SGridPanel::Slot(1, 2).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaPort, 1, 65535, LiveDelegates(ELiveControlGroup::Connection))]
 				+ SGridPanel::Slot(0, 3).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PanSpeedLabel", "PAN SPEED"))]
-				+ SGridPanel::Slot(1, 3).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaPanSpeed, 1, 24)]
+				+ SGridPanel::Slot(1, 3).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaPanSpeed, 1, 24, LiveDelegates(ELiveControlGroup::Connection))]
 				+ SGridPanel::Slot(0, 4).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("TiltSpeedLabel", "TILT SPEED"))]
-				+ SGridPanel::Slot(1, 4).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaTiltSpeed, 1, 20)]
+				+ SGridPanel::Slot(1, 4).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaTiltSpeed, 1, 20, LiveDelegates(ELiveControlGroup::Connection))]
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
 			[
@@ -440,7 +527,7 @@ TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotI
 				+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 4.0f, 0.0f)
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("ApplyPreview", "APPLY PREVIEW"))
+					.Text(LOCTEXT("ApplyPreview", "SYNC NOW"))
 					.HAlign(HAlign_Center)
 					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
 					.OnClicked_Lambda([this, SlotIndex]() { return ApplySlotPreview(SlotIndex); })
@@ -448,7 +535,7 @@ TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotI
 				+ SHorizontalBox::Slot().FillWidth(1.0f)
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("ApplySend", "APPLY + SEND"))
+					.Text(LOCTEXT("ApplySend", "SEND CURRENT"))
 					.HAlign(HAlign_Center)
 					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
 					.OnClicked_Lambda([this, SlotIndex]() { return ApplySlotAndSend(SlotIndex); })
@@ -644,6 +731,123 @@ FText STSAVCameraControllerTool::GetSlotSummaryText(const int32 SlotIndex) const
 		TSAVCameraControllerTool::Private::GetCameraTypeDisplayName(Camera->CameraType),
 		FText::AsNumber(Camera->OutputResolution.X), FText::AsNumber(Camera->OutputResolution.Y),
 		Camera->bEnableViscaOverIp ? LOCTEXT("ViscaOn", "On") : LOCTEXT("ViscaOff", "Off"));
+}
+
+void STSAVCameraControllerTool::BeginLiveControl(const int32 SlotIndex)
+{
+	ATSAVCameraActor* Camera = CameraSlots.IsValidIndex(SlotIndex) ? CameraSlots[SlotIndex].Camera.Get() : nullptr;
+	if (!Camera)
+	{
+		return;
+	}
+	ActiveLiveTransaction.Reset();
+	ActiveLiveSlot = SlotIndex;
+	ActiveLiveTransaction = MakeUnique<FScopedTransaction>(FText::Format(
+		LOCTEXT("LiveControlTransaction", "Live Control Camera {0}"), FText::FromString(Camera->GetActorLabel())));
+	Camera->Modify();
+}
+
+void STSAVCameraControllerTool::UpdateLiveControl(
+	const int32 SlotIndex,
+	const ELiveControlGroup Group,
+	const bool bFinalValue)
+{
+	if (!CameraSlots.IsValidIndex(SlotIndex))
+	{
+		return;
+	}
+	FCameraControlSlot& Slot = CameraSlots[SlotIndex];
+	ATSAVCameraActor* Camera = Slot.Camera.Get();
+	if (!Camera)
+	{
+		return;
+	}
+
+	Camera->bEnableViscaOverIp = Slot.bViscaEnabled;
+	Camera->ViscaIpAddress = Slot.ViscaIpField
+		? Slot.ViscaIpField->GetText().ToString().TrimStartAndEnd()
+		: Slot.ViscaIpAddress.TrimStartAndEnd();
+	Camera->ViscaPort = FMath::Clamp(Slot.ViscaPort, 1, 65535);
+	Camera->ViscaPanSpeed = FMath::Clamp(Slot.ViscaPanSpeed, 1, 24);
+	Camera->ViscaTiltSpeed = FMath::Clamp(Slot.ViscaTiltSpeed, 1, 20);
+
+	switch (Group)
+	{
+	case ELiveControlGroup::PTZ:
+		Camera->ApplyPTZ(Slot.PanDegrees, Slot.TiltDegrees, Slot.ZoomPercent / 100.0f, false);
+		break;
+	case ELiveControlGroup::Image:
+		Camera->ApplyImageControls(Slot.Iris, Slot.FocusDistanceCm, Slot.GainDb, false);
+		break;
+	case ELiveControlGroup::Position:
+		Camera->SetActorLocation(Slot.WorldPosition, false, nullptr, ETeleportType::TeleportPhysics);
+		break;
+	case ELiveControlGroup::Connection:
+		break;
+	case ELiveControlGroup::Metadata:
+	{
+		FString ResolvedName = Slot.CameraNameField
+			? Slot.CameraNameField->GetText().ToString().TrimStartAndEnd()
+			: Slot.CameraName.TrimStartAndEnd();
+		if (!ResolvedName.IsEmpty())
+		{
+			Camera->SetActorLabel(ResolvedName);
+			Camera->CameraLabel = FText::FromString(ResolvedName);
+			Slot.CameraName = ResolvedName;
+		}
+		break;
+	}
+	}
+
+	bool bViscaSent = true;
+	const bool bSendsVisca = Camera->bEnableViscaOverIp
+		&& (Group == ELiveControlGroup::PTZ || Group == ELiveControlGroup::Image);
+	if (bSendsVisca)
+	{
+		const double Now = FPlatformTime::Seconds();
+		if (bFinalValue || Now - Slot.LastLiveViscaSendTime >= 0.05)
+		{
+			bViscaSent = Group == ELiveControlGroup::PTZ
+				? Camera->SendViscaPtzControls()
+				: Camera->SendViscaImageControls();
+			Slot.LastLiveViscaSendTime = Now;
+		}
+	}
+
+	Camera->MarkPackageDirty();
+	if (GEditor)
+	{
+		GEditor->RedrawLevelEditingViewports(false);
+	}
+	if (bFinalValue)
+	{
+		Camera->PostEditChange();
+		SetStatus(FText::Format(
+			bSendsVisca
+				? LOCTEXT("LiveControlFinalVisca", "Bank {0}: live value applied and final VISCA command sent.")
+				: LOCTEXT("LiveControlFinalPreview", "Bank {0}: live value applied."),
+			FText::AsNumber(SlotIndex + 1)), !bSendsVisca || bViscaSent);
+	}
+}
+
+void STSAVCameraControllerTool::EndLiveControl(const int32 SlotIndex, const ELiveControlGroup Group)
+{
+	UpdateLiveControl(SlotIndex, Group, true);
+	ActiveLiveTransaction.Reset();
+	ActiveLiveSlot = INDEX_NONE;
+}
+
+void STSAVCameraControllerTool::CommitTypedControl(const int32 SlotIndex, const ELiveControlGroup Group)
+{
+	ATSAVCameraActor* Camera = CameraSlots.IsValidIndex(SlotIndex) ? CameraSlots[SlotIndex].Camera.Get() : nullptr;
+	if (!Camera)
+	{
+		return;
+	}
+	const FScopedTransaction Transaction(FText::Format(
+		LOCTEXT("CommitLiveControlTransaction", "Set Camera {0} Control"), FText::FromString(Camera->GetActorLabel())));
+	Camera->Modify();
+	UpdateLiveControl(SlotIndex, Group, true);
 }
 
 bool STSAVCameraControllerTool::ApplySlot(const int32 SlotIndex, const bool bSendVisca, const bool bUpdateStatus)
@@ -878,6 +1082,45 @@ bool FTSAVCameraControllerWidgetConstructionTest::RunTest(const FString& Paramet
 {
 	const TSharedRef<STSAVCameraControllerTool> Controller = SNew(STSAVCameraControllerTool);
 	TestEqual(TEXT("Camera controller has a root widget"), Controller->GetChildren()->Num(), 1);
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!TestNotNull(TEXT("Editor world is available"), World))
+	{
+		return false;
+	}
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.ObjectFlags |= RF_Transient | RF_Transactional;
+	ATSAVCameraActor* Camera = World->SpawnActor<ATSAVCameraActor>(
+		ATSAVCameraActor::StaticClass(), FTransform::Identity, SpawnParameters);
+	if (!TestNotNull(TEXT("Transient live-control camera was created"), Camera))
+	{
+		return false;
+	}
+
+	Controller->SetSlotCamera(0, Camera);
+	STSAVCameraControllerTool::FCameraControlSlot& Slot = Controller->CameraSlots[0];
+	Slot.bViscaEnabled = false;
+	Slot.PanDegrees = 42.0f;
+	Slot.TiltDegrees = 18.0f;
+	Slot.ZoomPercent = 65.0f;
+	Controller->BeginLiveControl(0);
+	Controller->UpdateLiveControl(0, STSAVCameraControllerTool::ELiveControlGroup::PTZ, false);
+	Controller->EndLiveControl(0, STSAVCameraControllerTool::ELiveControlGroup::PTZ);
+	TestTrue(TEXT("Live pan applied"), FMath::IsNearlyEqual(Camera->PanDegrees, 42.0f));
+	TestTrue(TEXT("Live tilt applied"), FMath::IsNearlyEqual(Camera->TiltDegrees, 18.0f));
+	TestTrue(TEXT("Live zoom applied"), FMath::IsNearlyEqual(Camera->ZoomNormalized, 0.65f));
+
+	Slot.Iris = 4.0f;
+	Slot.FocusDistanceCm = 2500.0f;
+	Slot.GainDb = 6.0f;
+	Controller->CommitTypedControl(0, STSAVCameraControllerTool::ELiveControlGroup::Image);
+	TestTrue(TEXT("Live iris applied"), FMath::IsNearlyEqual(Camera->Aperture, 4.0f));
+	TestTrue(TEXT("Live focus applied"), FMath::IsNearlyEqual(Camera->FocusDistanceCm, 2500.0f));
+	TestTrue(TEXT("Live gain applied"), FMath::IsNearlyEqual(Camera->GainDb, 6.0f));
+
+	Slot.WorldPosition = FVector(100.0, 200.0, 300.0);
+	Controller->CommitTypedControl(0, STSAVCameraControllerTool::ELiveControlGroup::Position);
+	TestTrue(TEXT("Live position applied"), Camera->GetActorLocation().Equals(Slot.WorldPosition));
+	Camera->Destroy();
 	return true;
 }
 #endif
