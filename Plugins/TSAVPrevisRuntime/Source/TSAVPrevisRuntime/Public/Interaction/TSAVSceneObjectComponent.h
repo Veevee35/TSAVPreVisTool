@@ -8,6 +8,8 @@
 
 #include "TSAVSceneObjectComponent.generated.h"
 
+class AActor;
+
 /** Persistent identity and common runtime-authoring state for a scene object. */
 UCLASS(ClassGroup = "TSAV PreVis", BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class TSAVPREVISRUNTIME_API UTSAVSceneObjectComponent final : public UActorComponent
@@ -16,6 +18,9 @@ class TSAVPREVISRUNTIME_API UTSAVSceneObjectComponent final : public UActorCompo
 
 public:
 	UTSAVSceneObjectComponent();
+
+	/** Return the actor's authoring metadata, creating a runtime instance when needed. */
+	static UTSAVSceneObjectComponent* EnsureForActor(AActor* Actor);
 
 	virtual void OnRegister() override;
 	virtual void BeginPlay() override;

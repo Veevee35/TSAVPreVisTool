@@ -2,6 +2,7 @@
 
 #include "Project/TSAVProjectSubsystem.h"
 
+#include "TSAVPrevisRuntime.h"
 #include "Dom/JsonObject.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -188,11 +189,18 @@ bool UTSAVProjectSubsystem::SaveProject(const FString& FilePath)
 	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
 	if (!FJsonSerializer::Serialize(Root, Writer))
 	{
+		UE_LOG(LogTSAVPrevisRuntime, Error, TEXT("Could not serialize TSAV project JSON for %s."), *TargetPath);
 		return false;
 	}
-	IFileManager::Get().MakeDirectory(*FPaths::GetPath(TargetPath), true);
+	const FString TargetDirectory = FPaths::GetPath(TargetPath);
+	if (!IFileManager::Get().MakeDirectory(*TargetDirectory, true) && !IFileManager::Get().DirectoryExists(*TargetDirectory))
+	{
+		UE_LOG(LogTSAVPrevisRuntime, Error, TEXT("Could not create TSAV project directory %s."), *TargetDirectory);
+		return false;
+	}
 	if (!FFileHelper::SaveStringToFile(Output, *TargetPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
+		UE_LOG(LogTSAVPrevisRuntime, Error, TEXT("Could not write TSAV project file %s (system error %d)."), *TargetPath, FPlatformMisc::GetLastError());
 		return false;
 	}
 
@@ -264,7 +272,7 @@ bool UTSAVProjectSubsystem::LoadProject(const FString& FilePath)
 			const TSharedPtr<FJsonObject>* TransformJson = nullptr;
 			ObjectJson->TryGetObjectField(TEXT("transform"), TransformJson);
 			AActor* Actor = World->SpawnActor<AActor>(ActorClass, TSAVProject::Private::JsonToTransform(TransformJson ? *TransformJson : nullptr), SpawnParameters);
-			UTSAVSceneObjectComponent* SceneObject = Actor ? Actor->FindComponentByClass<UTSAVSceneObjectComponent>() : nullptr;
+			UTSAVSceneObjectComponent* SceneObject = UTSAVSceneObjectComponent::EnsureForActor(Actor);
 			if (!SceneObject)
 			{
 				if (Actor) { Actor->Destroy(); }

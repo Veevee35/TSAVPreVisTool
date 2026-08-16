@@ -13,6 +13,7 @@ class UInputAction;
 class UInputMappingContext;
 class UTSAVMainWidget;
 class ATSAVTransformGizmoActor;
+enum class ETSAVTransformMode : uint8;
 
 /** Runtime controller that owns TSAV input contexts and viewport interaction. */
 UCLASS()
@@ -23,6 +24,11 @@ class TSAVPREVISRUNTIME_API ATSAVPlayerController final : public APlayerControll
 public:
 	ATSAVPlayerController();
 	virtual void PlayerTick(float DeltaTime) override;
+
+	/** Menu-callable transform and viewport controls. */
+	void SetTransformTool(ETSAVTransformMode NewMode);
+	void ToggleTransformCoordinateSpace();
+	void FrameSelection();
 
 protected:
 	virtual void BeginPlay() override;

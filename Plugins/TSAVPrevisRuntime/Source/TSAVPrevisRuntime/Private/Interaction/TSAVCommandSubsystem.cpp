@@ -60,7 +60,7 @@ namespace TSAVCommands::Private
 			FActorSpawnParameters SpawnParameters;
 			SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 			AActor* SpawnedActor = TargetWorld->SpawnActor<AActor>(ActorClass, Transform, SpawnParameters);
-			if (UTSAVSceneObjectComponent* SceneObject = SpawnedActor ? SpawnedActor->FindComponentByClass<UTSAVSceneObjectComponent>() : nullptr)
+			if (UTSAVSceneObjectComponent* SceneObject = UTSAVSceneObjectComponent::EnsureForActor(SpawnedActor))
 			{
 				SceneObject->ObjectId = ObjectId.IsValid() ? ObjectId : FGuid::NewGuid();
 				SceneObject->DisplayName = DisplayName;
@@ -108,14 +108,16 @@ namespace TSAVCommands::Private
 	class FSpawnCommand final : public UTSAVCommandSubsystem::ITSAVCommand
 	{
 	public:
-		explicit FSpawnCommand(FActorSnapshot InSnapshot) : Snapshot(MoveTemp(InSnapshot)) {}
+		FSpawnCommand(FActorSnapshot InSnapshot, FText InDescription)
+			: Snapshot(MoveTemp(InSnapshot)), Description(MoveTemp(InDescription)) {}
 		virtual void Execute() override { Snapshot.Spawn(); }
 		virtual void Undo() override { if (Snapshot.Actor.IsValid()) { Snapshot.Actor->Destroy(); } }
-		virtual FText GetDescription() const override { return NSLOCTEXT("TSAVPreVis", "SpawnCommand", "Add Object"); }
+		virtual FText GetDescription() const override { return Description; }
 		virtual AActor* GetAffectedActor() const override { return Snapshot.Actor.Get(); }
 		AActor* GetActor() const { return Snapshot.Actor.Get(); }
 	private:
 		FActorSnapshot Snapshot;
+		FText Description;
 	};
 
 	class FDeleteCommand final : public UTSAVCommandSubsystem::ITSAVCommand
@@ -205,18 +207,31 @@ void UTSAVCommandSubsystem::Deinitialize()
 
 AActor* UTSAVCommandSubsystem::SpawnSceneObject(UWorld* World, const FTransform& Transform, const FText& DisplayName)
 {
-	if (!World)
+	return SpawnActorClass(World, ATSAVSceneObjectActor::StaticClass(), Transform,
+		DisplayName.IsEmpty() ? NSLOCTEXT("TSAVPreVis", "DefaultCubeName", "Scene Cube") : DisplayName,
+		ETSAVObjectType::Scenic);
+}
+
+AActor* UTSAVCommandSubsystem::SpawnActorClass(
+	UWorld* World,
+	TSubclassOf<AActor> ActorClass,
+	const FTransform& Transform,
+	const FText& DisplayName,
+	const ETSAVObjectType ObjectType)
+{
+	if (!World || !ActorClass)
 	{
 		return nullptr;
 	}
 	TSAVCommands::Private::FActorSnapshot Snapshot;
 	Snapshot.World = World;
-	Snapshot.ClassPath = ATSAVSceneObjectActor::StaticClass()->GetPathName();
+	Snapshot.ClassPath = ActorClass->GetPathName();
 	Snapshot.Transform = Transform;
 	Snapshot.ObjectId = FGuid::NewGuid();
-	Snapshot.DisplayName = DisplayName.IsEmpty() ? NSLOCTEXT("TSAVPreVis", "DefaultCubeName", "Scene Cube") : DisplayName;
-	Snapshot.ObjectType = ETSAVObjectType::Scenic;
-	const TSharedRef<TSAVCommands::Private::FSpawnCommand> Command = MakeShared<TSAVCommands::Private::FSpawnCommand>(MoveTemp(Snapshot));
+	Snapshot.DisplayName = DisplayName.IsEmpty() ? NSLOCTEXT("TSAVPreVis", "DefaultObjectName", "Scene Object") : DisplayName;
+	Snapshot.ObjectType = ObjectType;
+	const FText Description = FText::Format(NSLOCTEXT("TSAVPreVis", "SpawnNamedCommand", "Add {0}"), Snapshot.DisplayName);
+	const TSharedRef<TSAVCommands::Private::FSpawnCommand> Command = MakeShared<TSAVCommands::Private::FSpawnCommand>(MoveTemp(Snapshot), Description);
 	ExecuteAndStore(Command);
 	return Command->GetActor();
 }
@@ -232,7 +247,8 @@ AActor* UTSAVCommandSubsystem::DuplicateActor(AActor* SourceActor, const FVector
 	Snapshot.ObjectId = FGuid::NewGuid();
 	Snapshot.Transform.AddToTranslation(WorldOffset);
 	Snapshot.DisplayName = FText::Format(NSLOCTEXT("TSAVPreVis", "DuplicateName", "{0} Copy"), Snapshot.DisplayName);
-	const TSharedRef<TSAVCommands::Private::FSpawnCommand> Command = MakeShared<TSAVCommands::Private::FSpawnCommand>(MoveTemp(Snapshot));
+	const TSharedRef<TSAVCommands::Private::FSpawnCommand> Command = MakeShared<TSAVCommands::Private::FSpawnCommand>(
+		MoveTemp(Snapshot), NSLOCTEXT("TSAVPreVis", "DuplicateCommand", "Duplicate Object"));
 	ExecuteAndStore(Command);
 	return Command->GetActor();
 }

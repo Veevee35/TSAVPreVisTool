@@ -4,6 +4,7 @@
 
 #include "Engine/GameInstance.h"
 #include "Engine/Engine.h"
+#include "Engine/PointLight.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
@@ -13,6 +14,7 @@
 #include "Misc/CoreDelegates.h"
 #include "Containers/Ticker.h"
 #include "Project/TSAVProjectSubsystem.h"
+#include "TSAVLEDWall.h"
 
 #define LOCTEXT_NAMESPACE "FTSAVPrevisRuntimeModule"
 
@@ -94,6 +96,30 @@ namespace TSAVPhase2Validation::Private
 		Commands->Undo();
 		if (!Require(FindById(World, DuplicateId) != nullptr, TEXT("Delete undo failed"))) { return; }
 
+		AActor* LEDWall = Commands->SpawnActorClass(
+			World,
+			ATSAVLEDWall::StaticClass(),
+			FTransform(FRotator::ZeroRotator, FVector(700.0f, 0.0f, 200.0f)),
+			FText::FromString(TEXT("Validation LED Wall")),
+			ETSAVObjectType::LED);
+		UTSAVSceneObjectComponent* LEDWallObject = LEDWall ? LEDWall->FindComponentByClass<UTSAVSceneObjectComponent>() : nullptr;
+		if (!Require(LEDWallObject && LEDWallObject->ObjectType == ETSAVObjectType::LED, TEXT("Generic LED wall spawn failed"))) { return; }
+		const FGuid LEDWallId = LEDWallObject->ObjectId;
+
+		AActor* PointLight = Commands->SpawnActorClass(
+			World,
+			APointLight::StaticClass(),
+			FTransform(FRotator::ZeroRotator, FVector(300.0f, 200.0f, 400.0f)),
+			FText::FromString(TEXT("Validation Point Light")),
+			ETSAVObjectType::Fixture);
+		UTSAVSceneObjectComponent* LightObject = PointLight ? PointLight->FindComponentByClass<UTSAVSceneObjectComponent>() : nullptr;
+		if (!Require(LightObject && LightObject->ObjectType == ETSAVObjectType::Fixture, TEXT("Generic light spawn failed"))) { return; }
+		const FGuid LightId = LightObject->ObjectId;
+		Commands->Undo();
+		if (!Require(FindById(World, LightId) == nullptr, TEXT("Generic actor undo failed"))) { return; }
+		Commands->Redo();
+		if (!Require(FindById(World, LightId) != nullptr, TEXT("Generic actor redo failed"))) { return; }
+
 		const FString ValidationPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Automation"), TEXT("Phase2Validation.tsav"));
 		if (!Require(Project->SaveProject(ValidationPath), TEXT(".tsav save failed"))) { return; }
 		Actor->SetActorLocation(FVector(9999.0f));
@@ -104,6 +130,8 @@ namespace TSAVPhase2Validation::Private
 		if (!Require(Actor->GetActorTransform().Equals(MovedTransform), TEXT("Persistent transform restoration failed"))) { return; }
 		if (!Require(SceneObject->DisplayName.ToString() == TEXT("Renamed Validation Cube"), TEXT("Persistent property restoration failed"))) { return; }
 		if (!Require(FindById(World, DuplicateId) != nullptr, TEXT("Persistent duplicate restoration failed"))) { return; }
+		if (!Require(Cast<ATSAVLEDWall>(FindById(World, LEDWallId)) != nullptr, TEXT("Persistent LED wall restoration failed"))) { return; }
+		if (!Require(Cast<APointLight>(FindById(World, LightId)) != nullptr, TEXT("Persistent light restoration failed"))) { return; }
 
 		UE_LOG(LogTSAVPrevisRuntime, Display, TEXT("CODEX_TSAV_PHASE2_COMMAND_PERSISTENCE_SUCCESS path=%s"), *ValidationPath);
 	}

@@ -4,6 +4,7 @@
 
 #include "TSAVPrevisRuntime.h"
 #include "Blueprint/WidgetTree.h"
+#include "Camera/CameraActor.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
@@ -18,14 +19,24 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/PointLight.h"
+#include "Engine/RectLight.h"
+#include "Engine/SpotLight.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
 #include "Interaction/TSAVCommandSubsystem.h"
 #include "Interaction/TSAVModeSubsystem.h"
+#include "Interaction/TSAVPlayerController.h"
 #include "Interaction/TSAVSceneObjectComponent.h"
+#include "Interaction/TSAVSceneObjectActor.h"
 #include "Interaction/TSAVSelectionSubsystem.h"
+#include "Interaction/TSAVTransformGizmoActor.h"
 #include "Project/TSAVProjectSubsystem.h"
+#include "TSAVDMXFixture.h"
+#include "TSAVLEDPanel.h"
+#include "TSAVLEDWall.h"
+#include "UI/TSAVMenuButton.h"
 #include "UI/TSAVOutlinerButton.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVMainWidget)
@@ -200,37 +211,41 @@ void UTSAVMainWidget::BuildLayout()
 		TitleSlot->SetVerticalAlignment(VAlign_Center);
 	}
 
-	const TCHAR* MenuLabels[] = { TEXT("File"), TEXT("Edit"), TEXT("Build"), TEXT("LED"), TEXT("Lighting"), TEXT("Video"), TEXT("Camera"), TEXT("View") };
-	for (const TCHAR* MenuLabel : MenuLabels)
-	{
-		UTextBlock* MenuText = CreateText(*WidgetTree, FText::FromString(MenuLabel), 12, PrimaryTextColor);
-		if (UHorizontalBoxSlot* MenuSlot = TopBarContent->AddChildToHorizontalBox(MenuText))
-		{
-			MenuSlot->SetPadding(FMargin(9.0f, 0.0f));
-			MenuSlot->SetVerticalAlignment(VAlign_Center);
-		}
-	}
-
-#define TSAV_ADD_TOP_ACTION(Label, Handler) \
+#define TSAV_ADD_TOP_MENU(Label, Handler) \
 	do \
 	{ \
-		UButton* Button = CreateModeButton(*WidgetTree, FText::FromString(TEXT(Label))); \
+		UButton* Button = WidgetTree->ConstructWidget<UButton>(); \
+		Button->SetBackgroundColor(FLinearColor(0.04f, 0.05f, 0.07f, 0.35f)); \
+		Button->SetContent(CreateText(*WidgetTree, FText::FromString(TEXT(Label)), 12, PrimaryTextColor)); \
 		Button->OnClicked.AddDynamic(this, &UTSAVMainWidget::Handler); \
 		if (UHorizontalBoxSlot* ButtonSlot = TopBarContent->AddChildToHorizontalBox(Button)) \
 		{ \
-			ButtonSlot->SetPadding(FMargin(3.0f, 0.0f)); \
+			ButtonSlot->SetPadding(FMargin(2.0f, 0.0f)); \
 			ButtonSlot->SetVerticalAlignment(VAlign_Center); \
 		} \
 	} while (false)
 
-	TSAV_ADD_TOP_ACTION("New", NewProjectClicked);
-	TSAV_ADD_TOP_ACTION("Save", SaveProjectClicked);
-	TSAV_ADD_TOP_ACTION("Load", LoadProjectClicked);
-	TSAV_ADD_TOP_ACTION("Add Cube", AddCubeClicked);
-	TSAV_ADD_TOP_ACTION("Undo", UndoClicked);
-	TSAV_ADD_TOP_ACTION("Redo", RedoClicked);
+	TSAV_ADD_TOP_MENU("File", FileMenuClicked);
+	TSAV_ADD_TOP_MENU("Edit", EditMenuClicked);
+	TSAV_ADD_TOP_MENU("Build", BuildMenuClicked);
+	TSAV_ADD_TOP_MENU("LED", LEDMenuClicked);
+	TSAV_ADD_TOP_MENU("Lighting", LightingMenuClicked);
+	TSAV_ADD_TOP_MENU("Video", VideoMenuClicked);
+	TSAV_ADD_TOP_MENU("Camera", CameraMenuClicked);
+	TSAV_ADD_TOP_MENU("View", ViewMenuClicked);
 
-#undef TSAV_ADD_TOP_ACTION
+#undef TSAV_ADD_TOP_MENU
+
+	MenuPopup = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("TopMenuPopup"));
+	MenuPopup->SetBrushColor(FLinearColor(0.025f, 0.032f, 0.045f, 0.99f));
+	MenuPopup->SetPadding(FMargin(6.0f));
+	MenuPopupEntries = WidgetTree->ConstructWidget<UVerticalBox>();
+	MenuPopup->SetContent(MenuPopupEntries);
+	MenuPopupSlot = RootCanvas->AddChildToCanvas(MenuPopup);
+	MenuPopupSlot->SetAnchors(FAnchors(0.0f, 0.0f));
+	MenuPopupSlot->SetOffsets(FMargin(160.0f, 42.0f, 235.0f, 300.0f));
+	MenuPopupSlot->SetZOrder(50);
+	MenuPopup->SetVisibility(ESlateVisibility::Collapsed);
 
 	UBorder* LeftPanel = WidgetTree->ConstructWidget<UBorder>();
 	LeftPanel->SetBrushColor(PanelColor);
@@ -383,6 +398,254 @@ void UTSAVMainWidget::BuildLayout()
 	ViewportHint->SetJustification(ETextJustify::Center);
 	AddCanvasPanel(*RootCanvas, *ViewportHint, FAnchors(0.5f, 1.0f), FMargin(0.0f, -58.0f, 560.0f, 22.0f), FVector2D(0.5f, 1.0f), 2);
 }
+
+void UTSAVMainWidget::ToggleMenu(const ETSAVTopMenu Menu, const float LeftPosition)
+{
+	if (!MenuPopup || !MenuPopupEntries || !MenuPopupSlot)
+	{
+		return;
+	}
+	if (OpenMenu == Menu && MenuPopup->GetVisibility() == ESlateVisibility::Visible)
+	{
+		HideMenu();
+		return;
+	}
+
+	OpenMenu = Menu;
+	MenuPopupEntries->ClearChildren();
+	const AActor* Selection = TSAVMainWidget::Private::GetSelectedActor(*this);
+	const UTSAVCommandSubsystem* Commands = GetGameInstance() ? GetGameInstance()->GetSubsystem<UTSAVCommandSubsystem>() : nullptr;
+
+	switch (Menu)
+	{
+	case ETSAVTopMenu::File:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuNew", "New Project"), ETSAVMenuAction::NewProject);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuSave", "Save Project    Ctrl+S"), ETSAVMenuAction::SaveProject);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLoad", "Load Project    Ctrl+O"), ETSAVMenuAction::LoadProject);
+		break;
+	case ETSAVTopMenu::Edit:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuUndo", "Undo    Ctrl+Z"), ETSAVMenuAction::Undo, Commands && Commands->CanUndo());
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuRedo", "Redo    Ctrl+Y"), ETSAVMenuAction::Redo, Commands && Commands->CanRedo());
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuDuplicate", "Duplicate Selection    Ctrl+D"), ETSAVMenuAction::DuplicateSelection, Selection != nullptr);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuDelete", "Delete Selection    Del"), ETSAVMenuAction::DeleteSelection, Selection != nullptr);
+		break;
+	case ETSAVTopMenu::Build:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuVenueFloor", "Add Venue Floor"), ETSAVMenuAction::AddVenueFloor);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuStageDeck", "Add Stage Deck"), ETSAVMenuAction::AddStageDeck);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuScenicCube", "Add Scenic Cube"), ETSAVMenuAction::AddScenicCube);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuTruss", "Add Truss Segment"), ETSAVMenuAction::AddTrussSegment);
+		break;
+	case ETSAVTopMenu::LED:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLEDWall", "Add LED Wall"), ETSAVMenuAction::AddLEDWall);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLEDPanel", "Add LED Panel"), ETSAVMenuAction::AddLEDPanel);
+		break;
+	case ETSAVTopMenu::Lighting:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuDMXFixture", "Add DMX Fixture"), ETSAVMenuAction::AddDMXFixture);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuPointLight", "Add Point Light"), ETSAVMenuAction::AddPointLight);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuSpotLight", "Add Spot Light"), ETSAVMenuAction::AddSpotLight);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuRectLight", "Add Rect Light"), ETSAVMenuAction::AddRectLight);
+		break;
+	case ETSAVTopMenu::Video:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuVideoSurface", "Add Video Surface"), ETSAVMenuAction::AddVideoSurface);
+		break;
+	case ETSAVTopMenu::Camera:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuCamera", "Add Camera From Current View"), ETSAVMenuAction::AddCamera);
+		break;
+	case ETSAVTopMenu::View:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuSelectView", "Edit View"), ETSAVMenuAction::SelectView);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuWalkthrough", "Walkthrough View"), ETSAVMenuAction::WalkthroughView);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuFrameSelection", "Frame Selection"), ETSAVMenuAction::FrameSelection, Selection != nullptr);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuTranslate", "Translate Tool    W"), ETSAVMenuAction::TranslateTool);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuRotate", "Rotate Tool    E"), ETSAVMenuAction::RotateTool);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuScale", "Scale Tool    R"), ETSAVMenuAction::ScaleTool);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuCoordinates", "Toggle World / Local    X"), ETSAVMenuAction::ToggleCoordinateSpace);
+		break;
+	default:
+		break;
+	}
+
+	const float PopupHeight = 12.0f + MenuPopupEntries->GetChildrenCount() * 32.0f;
+	MenuPopupSlot->SetOffsets(FMargin(LeftPosition, 42.0f, 235.0f, PopupHeight));
+	MenuPopup->SetVisibility(ESlateVisibility::Visible);
+}
+
+void UTSAVMainWidget::HideMenu()
+{
+	OpenMenu = ETSAVTopMenu::None;
+	if (MenuPopup)
+	{
+		MenuPopup->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void UTSAVMainWidget::AddMenuEntry(const FText& Label, const ETSAVMenuAction Action, const bool bEnabled)
+{
+	if (!MenuPopupEntries || !WidgetTree)
+	{
+		return;
+	}
+	UTSAVMenuButton* Button = WidgetTree->ConstructWidget<UTSAVMenuButton>();
+	Button->SetBackgroundColor(FLinearColor(0.055f, 0.07f, 0.095f, 1.0f));
+	Button->SetContent(TSAVMainWidget::Private::CreateText(*WidgetTree, Label, 11,
+		bEnabled ? TSAVMainWidget::Private::PrimaryTextColor : TSAVMainWidget::Private::MutedTextColor));
+	Button->SetIsEnabled(bEnabled);
+	Button->InitializeForAction(Action);
+	Button->OnActionClicked.AddUniqueDynamic(this, &UTSAVMainWidget::HandleMenuActionClicked);
+	if (UVerticalBoxSlot* MenuEntrySlot = MenuPopupEntries->AddChildToVerticalBox(Button))
+	{
+		MenuEntrySlot->SetPadding(FMargin(0.0f, 1.0f));
+		MenuEntrySlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+}
+
+FTransform UTSAVMainWidget::MakePlacementTransform(const FVector& Scale, const float Distance) const
+{
+	if (const APlayerController* Controller = GetOwningPlayer())
+	{
+		if (const APlayerCameraManager* Camera = Controller->PlayerCameraManager)
+		{
+			const FRotator CameraRotation = Camera->GetCameraRotation();
+			return FTransform(
+				FRotator(0.0f, CameraRotation.Yaw + 180.0f, 0.0f),
+				Camera->GetCameraLocation() + CameraRotation.Vector() * Distance,
+				Scale);
+		}
+	}
+	return FTransform(FRotator::ZeroRotator, FVector(0.0f, 0.0f, 100.0f), Scale);
+}
+
+AActor* UTSAVMainWidget::SpawnAndSelect(
+	TSubclassOf<AActor> ActorClass,
+	const FTransform& Transform,
+	const FText& DisplayName,
+	const ETSAVObjectType ObjectType)
+{
+	if (!GetGameInstance() || !GetWorld())
+	{
+		return nullptr;
+	}
+	AActor* Actor = GetGameInstance()->GetSubsystem<UTSAVCommandSubsystem>()->SpawnActorClass(
+		GetWorld(), ActorClass, Transform, DisplayName, ObjectType);
+	if (Actor && GetOwningLocalPlayer())
+	{
+		GetOwningLocalPlayer()->GetSubsystem<UTSAVSelectionSubsystem>()->SelectActor(Actor);
+	}
+	return Actor;
+}
+
+void UTSAVMainWidget::HandleMenuActionClicked(const ETSAVMenuAction Action)
+{
+	HideMenu();
+	ExecuteMenuAction(Action);
+}
+
+void UTSAVMainWidget::ExecuteMenuAction(const ETSAVMenuAction Action)
+{
+	switch (Action)
+	{
+	case ETSAVMenuAction::NewProject: NewProjectClicked(); break;
+	case ETSAVMenuAction::SaveProject: SaveProjectClicked(); break;
+	case ETSAVMenuAction::LoadProject: LoadProjectClicked(); break;
+	case ETSAVMenuAction::Undo: UndoClicked(); break;
+	case ETSAVMenuAction::Redo: RedoClicked(); break;
+	case ETSAVMenuAction::DuplicateSelection: DuplicateClicked(); break;
+	case ETSAVMenuAction::DeleteSelection: DeleteClicked(); break;
+	case ETSAVMenuAction::AddVenueFloor:
+		SetAppMode(ETSAVAppMode::Venue);
+		SpawnAndSelect(ATSAVSceneObjectActor::StaticClass(), MakePlacementTransform(FVector(10.0f, 10.0f, 0.1f), 700.0f),
+			NSLOCTEXT("TSAVPreVis", "NewVenueFloor", "Venue Floor"), ETSAVObjectType::Venue);
+		break;
+	case ETSAVMenuAction::AddStageDeck:
+		SetAppMode(ETSAVAppMode::Stage);
+		SpawnAndSelect(ATSAVSceneObjectActor::StaticClass(), MakePlacementTransform(FVector(4.0f, 2.0f, 0.2f)),
+			NSLOCTEXT("TSAVPreVis", "NewStageDeck", "Stage Deck"), ETSAVObjectType::Stage);
+		break;
+	case ETSAVMenuAction::AddScenicCube:
+		AddCubeClicked();
+		break;
+	case ETSAVMenuAction::AddTrussSegment:
+		SetAppMode(ETSAVAppMode::Truss);
+		SpawnAndSelect(ATSAVSceneObjectActor::StaticClass(), MakePlacementTransform(FVector(3.0f, 0.15f, 0.15f)),
+			NSLOCTEXT("TSAVPreVis", "NewTrussSegment", "Truss Segment"), ETSAVObjectType::Truss);
+		break;
+	case ETSAVMenuAction::AddLEDWall:
+		SetAppMode(ETSAVAppMode::LED);
+		SpawnAndSelect(ATSAVLEDWall::StaticClass(), MakePlacementTransform(),
+			NSLOCTEXT("TSAVPreVis", "NewLEDWall", "LED Wall"), ETSAVObjectType::LED);
+		break;
+	case ETSAVMenuAction::AddLEDPanel:
+		SetAppMode(ETSAVAppMode::LED);
+		SpawnAndSelect(ATSAVLEDPanel::StaticClass(), MakePlacementTransform(),
+			NSLOCTEXT("TSAVPreVis", "NewLEDPanel", "LED Panel"), ETSAVObjectType::LED);
+		break;
+	case ETSAVMenuAction::AddDMXFixture:
+		SetAppMode(ETSAVAppMode::Lighting);
+		SpawnAndSelect(ATSAVDMXFixture::StaticClass(), MakePlacementTransform(FVector::OneVector, 350.0f),
+			NSLOCTEXT("TSAVPreVis", "NewDMXFixture", "DMX Fixture"), ETSAVObjectType::Fixture);
+		break;
+	case ETSAVMenuAction::AddPointLight:
+		SetAppMode(ETSAVAppMode::Lighting);
+		SpawnAndSelect(APointLight::StaticClass(), MakePlacementTransform(FVector::OneVector, 350.0f),
+			NSLOCTEXT("TSAVPreVis", "NewPointLight", "Point Light"), ETSAVObjectType::Fixture);
+		break;
+	case ETSAVMenuAction::AddSpotLight:
+		SetAppMode(ETSAVAppMode::Lighting);
+		SpawnAndSelect(ASpotLight::StaticClass(), MakePlacementTransform(FVector::OneVector, 350.0f),
+			NSLOCTEXT("TSAVPreVis", "NewSpotLight", "Spot Light"), ETSAVObjectType::Fixture);
+		break;
+	case ETSAVMenuAction::AddRectLight:
+		SetAppMode(ETSAVAppMode::Lighting);
+		SpawnAndSelect(ARectLight::StaticClass(), MakePlacementTransform(FVector::OneVector, 350.0f),
+			NSLOCTEXT("TSAVPreVis", "NewRectLight", "Rect Light"), ETSAVObjectType::Fixture);
+		break;
+	case ETSAVMenuAction::AddVideoSurface:
+		SetAppMode(ETSAVAppMode::Video);
+		SpawnAndSelect(ATSAVLEDPanel::StaticClass(), MakePlacementTransform(FVector(4.0f, 1.0f, 2.25f)),
+			NSLOCTEXT("TSAVPreVis", "NewVideoSurface", "Video Surface"), ETSAVObjectType::Video);
+		break;
+	case ETSAVMenuAction::AddCamera:
+	{
+		SetAppMode(ETSAVAppMode::Camera);
+		FTransform CameraTransform = FTransform::Identity;
+		if (const APlayerController* Controller = GetOwningPlayer())
+		{
+			if (const APlayerCameraManager* Camera = Controller->PlayerCameraManager)
+			{
+				CameraTransform = FTransform(Camera->GetCameraRotation(), Camera->GetCameraLocation());
+			}
+		}
+		SpawnAndSelect(ACameraActor::StaticClass(), CameraTransform,
+			NSLOCTEXT("TSAVPreVis", "NewCamera", "Camera"), ETSAVObjectType::Camera);
+		break;
+	}
+	case ETSAVMenuAction::SelectView: SetAppMode(ETSAVAppMode::Select); break;
+	case ETSAVMenuAction::WalkthroughView: SetAppMode(ETSAVAppMode::Walkthrough); break;
+	case ETSAVMenuAction::TranslateTool:
+		if (ATSAVPlayerController* Controller = Cast<ATSAVPlayerController>(GetOwningPlayer())) { Controller->SetTransformTool(ETSAVTransformMode::Translate); }
+		break;
+	case ETSAVMenuAction::RotateTool:
+		if (ATSAVPlayerController* Controller = Cast<ATSAVPlayerController>(GetOwningPlayer())) { Controller->SetTransformTool(ETSAVTransformMode::Rotate); }
+		break;
+	case ETSAVMenuAction::ScaleTool:
+		if (ATSAVPlayerController* Controller = Cast<ATSAVPlayerController>(GetOwningPlayer())) { Controller->SetTransformTool(ETSAVTransformMode::Scale); }
+		break;
+	case ETSAVMenuAction::ToggleCoordinateSpace:
+		if (ATSAVPlayerController* Controller = Cast<ATSAVPlayerController>(GetOwningPlayer())) { Controller->ToggleTransformCoordinateSpace(); }
+		break;
+	case ETSAVMenuAction::FrameSelection:
+		if (ATSAVPlayerController* Controller = Cast<ATSAVPlayerController>(GetOwningPlayer())) { Controller->FrameSelection(); }
+		break;
+	}
+}
+
+void UTSAVMainWidget::FileMenuClicked() { ToggleMenu(ETSAVTopMenu::File, 158.0f); }
+void UTSAVMainWidget::EditMenuClicked() { ToggleMenu(ETSAVTopMenu::Edit, 205.0f); }
+void UTSAVMainWidget::BuildMenuClicked() { ToggleMenu(ETSAVTopMenu::Build, 252.0f); }
+void UTSAVMainWidget::LEDMenuClicked() { ToggleMenu(ETSAVTopMenu::LED, 306.0f); }
+void UTSAVMainWidget::LightingMenuClicked() { ToggleMenu(ETSAVTopMenu::Lighting, 350.0f); }
+void UTSAVMainWidget::VideoMenuClicked() { ToggleMenu(ETSAVTopMenu::Video, 420.0f); }
+void UTSAVMainWidget::CameraMenuClicked() { ToggleMenu(ETSAVTopMenu::Camera, 474.0f); }
+void UTSAVMainWidget::ViewMenuClicked() { ToggleMenu(ETSAVTopMenu::View, 542.0f); }
 
 void UTSAVMainWidget::SetAppMode(const ETSAVAppMode NewMode)
 {

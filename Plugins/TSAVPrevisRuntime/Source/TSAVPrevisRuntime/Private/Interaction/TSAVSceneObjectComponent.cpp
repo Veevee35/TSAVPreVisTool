@@ -12,6 +12,23 @@ UTSAVSceneObjectComponent::UTSAVSceneObjectComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
+UTSAVSceneObjectComponent* UTSAVSceneObjectComponent::EnsureForActor(AActor* Actor)
+{
+	if (!IsValid(Actor))
+	{
+		return nullptr;
+	}
+	if (UTSAVSceneObjectComponent* Existing = Actor->FindComponentByClass<UTSAVSceneObjectComponent>())
+	{
+		return Existing;
+	}
+
+	UTSAVSceneObjectComponent* SceneObject = NewObject<UTSAVSceneObjectComponent>(Actor, TEXT("TSAVSceneObject"));
+	Actor->AddInstanceComponent(SceneObject);
+	SceneObject->RegisterComponent();
+	return SceneObject;
+}
+
 void UTSAVSceneObjectComponent::OnRegister()
 {
 	Super::OnRegister();

@@ -6,15 +6,31 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Types/SlateEnums.h"
+#include "UI/TSAVMenuButton.h"
 
 #include "TSAVMainWidget.generated.h"
 
 class AActor;
+class UBorder;
 class UCanvasPanel;
+class UCanvasPanelSlot;
 class UEditableTextBox;
 class UScrollBox;
 class UTextBlock;
 class UVerticalBox;
+
+enum class ETSAVTopMenu : uint8
+{
+	None,
+	File,
+	Edit,
+	Build,
+	LED,
+	Lighting,
+	Video,
+	Camera,
+	View,
+};
 
 /** Asset-independent runtime application chrome for the first packaged shell. */
 UCLASS()
@@ -34,6 +50,12 @@ private:
 	void RefreshOutliner();
 	void RefreshProjectStatus();
 	void CommitTransformValue(int32 GroupIndex, int32 AxisIndex, const FText& Text);
+	void ToggleMenu(ETSAVTopMenu Menu, float LeftPosition);
+	void HideMenu();
+	void AddMenuEntry(const FText& Label, ETSAVMenuAction Action, bool bEnabled = true);
+	void ExecuteMenuAction(ETSAVMenuAction Action);
+	FTransform MakePlacementTransform(const FVector& Scale = FVector::OneVector, float Distance = 500.0f) const;
+	AActor* SpawnAndSelect(TSubclassOf<AActor> ActorClass, const FTransform& Transform, const FText& DisplayName, ETSAVObjectType ObjectType);
 	static FText GetModeText(ETSAVAppMode Mode);
 
 	UFUNCTION()
@@ -53,6 +75,33 @@ private:
 
 	UFUNCTION()
 	void HandleOutlinerActorClicked(AActor* Actor);
+
+	UFUNCTION()
+	void HandleMenuActionClicked(ETSAVMenuAction Action);
+
+	UFUNCTION()
+	void FileMenuClicked();
+
+	UFUNCTION()
+	void EditMenuClicked();
+
+	UFUNCTION()
+	void BuildMenuClicked();
+
+	UFUNCTION()
+	void LEDMenuClicked();
+
+	UFUNCTION()
+	void LightingMenuClicked();
+
+	UFUNCTION()
+	void VideoMenuClicked();
+
+	UFUNCTION()
+	void CameraMenuClicked();
+
+	UFUNCTION()
+	void ViewMenuClicked();
 
 	UFUNCTION()
 	void NewProjectClicked();
@@ -168,4 +217,15 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> UndoStatusText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> MenuPopup;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> MenuPopupEntries;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCanvasPanelSlot> MenuPopupSlot;
+
+	ETSAVTopMenu OpenMenu = ETSAVTopMenu::None;
 };

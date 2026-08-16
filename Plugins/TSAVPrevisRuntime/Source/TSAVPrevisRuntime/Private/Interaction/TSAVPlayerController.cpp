@@ -356,35 +356,67 @@ void ATSAVPlayerController::HandleModeChanged(const ETSAVAppMode NewMode, const 
 
 void ATSAVPlayerController::SetTranslateMode(const FInputActionValue& Value)
 {
-	if (!IsInputKeyDown(EKeys::RightMouseButton) && TransformGizmo)
+	if (!IsInputKeyDown(EKeys::RightMouseButton))
 	{
-		TransformGizmo->SetTransformMode(ETSAVTransformMode::Translate);
+		SetTransformTool(ETSAVTransformMode::Translate);
 	}
 }
 
 void ATSAVPlayerController::SetRotateMode(const FInputActionValue& Value)
 {
-	if (!IsInputKeyDown(EKeys::RightMouseButton) && TransformGizmo)
+	if (!IsInputKeyDown(EKeys::RightMouseButton))
 	{
-		TransformGizmo->SetTransformMode(ETSAVTransformMode::Rotate);
+		SetTransformTool(ETSAVTransformMode::Rotate);
 	}
 }
 
 void ATSAVPlayerController::SetScaleMode(const FInputActionValue& Value)
 {
-	if (!IsInputKeyDown(EKeys::RightMouseButton) && TransformGizmo)
+	if (!IsInputKeyDown(EKeys::RightMouseButton))
 	{
-		TransformGizmo->SetTransformMode(ETSAVTransformMode::Scale);
+		SetTransformTool(ETSAVTransformMode::Scale);
 	}
 }
 
 void ATSAVPlayerController::ToggleCoordinateSpace(const FInputActionValue& Value)
+{
+	ToggleTransformCoordinateSpace();
+}
+
+void ATSAVPlayerController::SetTransformTool(const ETSAVTransformMode NewMode)
+{
+	if (TransformGizmo)
+	{
+		TransformGizmo->SetTransformMode(NewMode);
+	}
+}
+
+void ATSAVPlayerController::ToggleTransformCoordinateSpace()
 {
 	if (TransformGizmo)
 	{
 		TransformGizmo->SetCoordinateSpace(TransformGizmo->GetCoordinateSpace() == ETSAVCoordinateSpace::World
 			? ETSAVCoordinateSpace::Local : ETSAVCoordinateSpace::World);
 	}
+}
+
+void ATSAVPlayerController::FrameSelection()
+{
+	const UTSAVSelectionSubsystem* Selection = GetLocalPlayer() ? GetLocalPlayer()->GetSubsystem<UTSAVSelectionSubsystem>() : nullptr;
+	AActor* SelectedActor = Selection ? Selection->GetPrimarySelection() : nullptr;
+	APawn* ViewPawn = GetPawn();
+	if (!SelectedActor || !ViewPawn)
+	{
+		return;
+	}
+
+	FVector BoundsOrigin;
+	FVector BoundsExtent;
+	SelectedActor->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+	const FVector ViewDirection = PlayerCameraManager ? PlayerCameraManager->GetCameraRotation().Vector() : GetControlRotation().Vector();
+	const float Distance = FMath::Max(BoundsExtent.GetMax() * 3.5f, 300.0f);
+	ViewPawn->SetActorLocation(BoundsOrigin - ViewDirection * Distance);
+	SetControlRotation((BoundsOrigin - ViewPawn->GetActorLocation()).Rotation());
 }
 
 void ATSAVPlayerController::DeleteSelection(const FInputActionValue& Value)

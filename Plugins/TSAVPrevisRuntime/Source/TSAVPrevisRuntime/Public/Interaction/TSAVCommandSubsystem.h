@@ -27,6 +27,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Commands")
 	AActor* SpawnSceneObject(UWorld* World, const FTransform& Transform, const FText& DisplayName);
 
+	/** Spawn any runtime actor as an editable TSAV scene object. */
+	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Commands")
+	AActor* SpawnActorClass(
+		UWorld* World,
+		TSubclassOf<AActor> ActorClass,
+		const FTransform& Transform,
+		const FText& DisplayName,
+		ETSAVObjectType ObjectType);
+
 	UFUNCTION(BlueprintCallable, Category = "TSAV PreVis|Commands")
 	AActor* DuplicateActor(AActor* SourceActor, const FVector& WorldOffset = FVector(50.0f, 50.0f, 0.0f));
 
