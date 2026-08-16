@@ -6,6 +6,7 @@
 #include "Engine/Selection.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Misc/AutomationTest.h"
 #include "ScopedTransaction.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
@@ -13,10 +14,13 @@
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
+#include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SGridPanel.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
+#include "Widgets/Layout/SUniformGridPanel.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -28,7 +32,7 @@ namespace TSAVCameraControllerTool::Private
 	{
 		if (!Camera)
 		{
-			return TEXT("None");
+			return TEXT("None (clear slot)");
 		}
 		return FString::Printf(TEXT("%s  |  %d x %d"),
 			*Camera->GetActorLabel(), Camera->OutputResolution.X, Camera->OutputResolution.Y);
@@ -42,55 +46,188 @@ namespace TSAVCameraControllerTool::Private
 		}
 		return LOCTEXT("UnknownCameraType", "Unknown");
 	}
+
+	TSharedRef<SWidget> MakeFloatControl(
+		float* Value,
+		const float InputMinimum,
+		const float InputMaximum,
+		const float SliderMinimum,
+		const float SliderMaximum)
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([Value, SliderMinimum, SliderMaximum]()
+				{
+					return FMath::GetMappedRangeValueClamped(
+						FVector2D(SliderMinimum, SliderMaximum), FVector2D(0.0, 1.0), *Value);
+				})
+				.OnValueChanged_Lambda([Value, SliderMinimum, SliderMaximum](const float Normalized)
+				{
+					*Value = FMath::Lerp(SliderMinimum, SliderMaximum, Normalized);
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SBox)
+				.WidthOverride(105.0f)
+				[
+					SNew(SNumericEntryBox<float>)
+					.MinValue(InputMinimum)
+					.MaxValue(InputMaximum)
+					.Value_Lambda([Value]() { return *Value; })
+					.OnValueChanged_Lambda([Value, InputMinimum, InputMaximum](const float NewValue)
+					{
+						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+					})
+					.OnValueCommitted_Lambda([Value, InputMinimum, InputMaximum](const float NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+					})
+				]
+			];
+	}
+
+	TSharedRef<SWidget> MakeLogFloatControl(float* Value, const float Minimum, const float Maximum)
+	{
+		const float LogMinimum = FMath::Loge(Minimum);
+		const float LogMaximum = FMath::Loge(Maximum);
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([Value, LogMinimum, LogMaximum]()
+				{
+					return FMath::GetMappedRangeValueClamped(
+						FVector2D(LogMinimum, LogMaximum), FVector2D(0.0, 1.0),
+						FMath::Loge(FMath::Max(*Value, 1.0f)));
+				})
+				.OnValueChanged_Lambda([Value, LogMinimum, LogMaximum](const float Normalized)
+				{
+					*Value = FMath::Exp(FMath::Lerp(LogMinimum, LogMaximum, Normalized));
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SBox)
+				.WidthOverride(105.0f)
+				[
+					SNew(SNumericEntryBox<float>)
+					.MinValue(Minimum)
+					.MaxValue(Maximum)
+					.Value_Lambda([Value]() { return *Value; })
+					.OnValueChanged_Lambda([Value, Minimum, Maximum](const float NewValue)
+					{
+						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+					})
+					.OnValueCommitted_Lambda([Value, Minimum, Maximum](const float NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+					})
+				]
+			];
+	}
+
+	TSharedRef<SWidget> MakeDoubleControl(
+		double* Value,
+		const double InputMinimum,
+		const double InputMaximum,
+		const double SliderMinimum,
+		const double SliderMaximum)
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([Value, SliderMinimum, SliderMaximum]()
+				{
+					return static_cast<float>(FMath::GetMappedRangeValueClamped(
+						FVector2D(SliderMinimum, SliderMaximum), FVector2D(0.0, 1.0), *Value));
+				})
+				.OnValueChanged_Lambda([Value, SliderMinimum, SliderMaximum](const float Normalized)
+				{
+					*Value = FMath::Lerp(SliderMinimum, SliderMaximum, static_cast<double>(Normalized));
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SBox)
+				.WidthOverride(105.0f)
+				[
+					SNew(SNumericEntryBox<double>)
+					.MinValue(InputMinimum)
+					.MaxValue(InputMaximum)
+					.Value_Lambda([Value]() { return *Value; })
+					.OnValueChanged_Lambda([Value, InputMinimum, InputMaximum](const double NewValue)
+					{
+						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+					})
+					.OnValueCommitted_Lambda([Value, InputMinimum, InputMaximum](const double NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, InputMinimum, InputMaximum);
+					})
+				]
+			];
+	}
+
+	TSharedRef<SWidget> MakeIntControl(int32* Value, const int32 Minimum, const int32 Maximum)
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([Value, Minimum, Maximum]()
+				{
+					return FMath::GetMappedRangeValueClamped(
+						FVector2D(Minimum, Maximum), FVector2D(0.0, 1.0), *Value);
+				})
+				.OnValueChanged_Lambda([Value, Minimum, Maximum](const float Normalized)
+				{
+					*Value = FMath::RoundToInt(FMath::Lerp(static_cast<float>(Minimum), static_cast<float>(Maximum), Normalized));
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SBox)
+				.WidthOverride(105.0f)
+				[
+					SNew(SNumericEntryBox<int32>)
+					.MinValue(Minimum)
+					.MaxValue(Maximum)
+					.Value_Lambda([Value]() { return *Value; })
+					.OnValueChanged_Lambda([Value, Minimum, Maximum](const int32 NewValue)
+					{
+						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+					})
+					.OnValueCommitted_Lambda([Value, Minimum, Maximum](const int32 NewValue, ETextCommit::Type)
+					{
+						*Value = FMath::Clamp(NewValue, Minimum, Maximum);
+					})
+				]
+			];
+	}
 }
 
 void STSAVCameraControllerTool::Construct(const FArguments& InArgs)
 {
-	auto MakeFloatField = [](float* Value, const float Minimum, const float Maximum) -> TSharedRef<SWidget>
-	{
-		return SNew(SNumericEntryBox<float>)
-			.MinValue(Minimum)
-			.MaxValue(Maximum)
-			.MinSliderValue(Minimum)
-			.MaxSliderValue(Maximum)
-			.Value_Lambda([Value]() { return *Value; })
-			.OnValueChanged_Lambda([Value, Minimum, Maximum](const float NewValue)
-			{
-				*Value = FMath::Clamp(NewValue, Minimum, Maximum);
-			})
-			.OnValueCommitted_Lambda([Value, Minimum, Maximum](const float NewValue, ETextCommit::Type)
-			{
-				*Value = FMath::Clamp(NewValue, Minimum, Maximum);
-			});
-	};
-
-	auto MakePositionField = [](const FText& AxisLabel, double* Value) -> TSharedRef<SWidget>
-	{
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.Padding(0.0f, 0.0f, 4.0f, 0.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(STextBlock).Text(AxisLabel)
-			]
-			+ SHorizontalBox::Slot()
-			.FillWidth(1.0f)
-			[
-				SNew(SNumericEntryBox<double>)
-				.MinValue(-1000000.0)
-				.MaxValue(1000000.0)
-				.Value_Lambda([Value]() { return *Value; })
-				.OnValueChanged_Lambda([Value](const double NewValue)
-				{
-					*Value = FMath::Clamp(NewValue, -1000000.0, 1000000.0);
-				})
-				.OnValueCommitted_Lambda([Value](const double NewValue, ETextCommit::Type)
-				{
-					*Value = FMath::Clamp(NewValue, -1000000.0, 1000000.0);
-				})
-			];
-	};
+	CameraSlots.SetNum(4);
 
 	ChildSlot
 	[
@@ -98,289 +235,81 @@ void STSAVCameraControllerTool::Construct(const FArguments& InArgs)
 		.BorderImage(FAppStyle::GetBrush(TEXT("ToolPanel.GroupBorder")))
 		.Padding(12.0f)
 		[
-			SNew(SScrollBox)
-			+ SScrollBox::Slot()
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 4.0f)
 			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 0.0f, 0.0f, 4.0f)
+				SNew(STextBlock)
+				.Text(LOCTEXT("Title", "FOUR-CAMERA CONTROLLER"))
+				.Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 10.0f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("Description", "Assign up to four cameras. Each bank keeps independent controls and VISCA settings; every numeric property has a slider and a typeable value."))
+				.AutoWrapText(true)
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 10.0f)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("Title", "CAMERA CONTROLLER"))
-					.Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+					SNew(SButton)
+					.Text(LOCTEXT("Refresh", "Refresh Cameras"))
+					.OnClicked(this, &STSAVCameraControllerTool::RefreshCameras)
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 0.0f, 0.0f, 12.0f)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 12.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("Description", "Control every TSAV camera from one panel. Preview changes locally or send PTZ and image controls to a physical camera using VISCA over IP."))
-					.AutoWrapText(true)
+					SNew(SButton)
+					.Text(LOCTEXT("UseSelected", "Load Selected (Max 4)"))
+					.OnClicked(this, &STSAVCameraControllerTool::UseSelectedCameras)
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+				+ SHorizontalBox::Slot().FillWidth(1.0f)
 				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot()
-					.FillWidth(1.0f)
-					[
-						SAssignNew(CameraCombo, SComboBox<TSharedPtr<FCameraOption>>)
-						.OptionsSource(&CameraOptions)
-						.OnGenerateWidget(this, &STSAVCameraControllerTool::GenerateCameraOption)
-						.OnSelectionChanged(this, &STSAVCameraControllerTool::CameraOptionChanged)
-						[
-							SNew(STextBlock).Text(this, &STSAVCameraControllerTool::GetActiveCameraText)
-						]
-					]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.Padding(6.0f, 0.0f, 0.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("Refresh", "Refresh"))
-						.OnClicked(this, &STSAVCameraControllerTool::RefreshCameras)
-					]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.Padding(6.0f, 0.0f, 0.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("UseSelected", "Use Selected"))
-						.OnClicked(this, &STSAVCameraControllerTool::UseSelectedCamera)
-					]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.Padding(6.0f, 0.0f, 0.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("SelectLevel", "Select"))
-						.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid(); })
-						.OnClicked(this, &STSAVCameraControllerTool::SelectCameraInLevel)
-					]
+					SNew(SSpacer)
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.Text(this, &STSAVCameraControllerTool::GetCameraSummaryText)
-					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+					SNew(SButton)
+					.Text(LOCTEXT("ApplyAllPreview", "APPLY ALL PREVIEWS"))
+					.IsEnabled_Lambda([this]() { return GetAssignedCameraCount() > 0; })
+					.OnClicked(this, &STSAVCameraControllerTool::ApplyAllPreviews)
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 12.0f)
+				+ SHorizontalBox::Slot().AutoWidth()
 				[
-					SNew(SSeparator)
+					SNew(SButton)
+					.Text(LOCTEXT("ApplyAllVisca", "APPLY + SEND ALL VISCA"))
+					.IsEnabled_Lambda([this]() { return GetAssignedCameraCount() > 0; })
+					.OnClicked(this, &STSAVCameraControllerTool::ApplyAllAndSend)
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
+			]
+			+ SVerticalBox::Slot()
+			.FillHeight(1.0f)
+			[
+				SNew(SScrollBox)
+				+ SScrollBox::Slot()
 				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("CameraControlsHeading", "CAMERA CONTROLS"))
-					.Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+					SNew(SUniformGridPanel)
+					.SlotPadding(FMargin(0.0f, 0.0f, 8.0f, 8.0f))
+					+ SUniformGridPanel::Slot(0, 0)[BuildCameraBank(0)]
+					+ SUniformGridPanel::Slot(1, 0)[BuildCameraBank(1)]
+					+ SUniformGridPanel::Slot(0, 1)[BuildCameraBank(2)]
+					+ SUniformGridPanel::Slot(1, 1)[BuildCameraBank(3)]
 				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 4.0f, 0.0f, 0.0f)
-				[
-					SNew(SGridPanel)
-					.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid(); })
-					.FillColumn(1, 1.0f)
-					+ SGridPanel::Slot(0, 0).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("NameLabel", "CAMERA NAME"))
-					]
-					+ SGridPanel::Slot(1, 0).Padding(0.0f, 4.0f)
-					[
-						SAssignNew(CameraNameField, SEditableTextBox)
-						.OnTextChanged_Lambda([this](const FText& Text) { CameraName = Text.ToString(); })
-					]
-					+ SGridPanel::Slot(0, 1).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("PanTiltLabel", "PAN / TILT (DEG)"))
-					]
-					+ SGridPanel::Slot(1, 1).Padding(0.0f, 4.0f)
-					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 6.0f, 0.0f)[MakeFloatField(&PanDegrees, -170.0f, 170.0f)]
-						+ SHorizontalBox::Slot().FillWidth(1.0f)[MakeFloatField(&TiltDegrees, -30.0f, 90.0f)]
-					]
-					+ SGridPanel::Slot(0, 2).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("ZoomLabel", "ZOOM (%)"))
-					]
-					+ SGridPanel::Slot(1, 2).Padding(0.0f, 4.0f)
-					[
-						MakeFloatField(&ZoomPercent, 0.0f, 100.0f)
-					]
-					+ SGridPanel::Slot(0, 3).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("IrisLabel", "IRIS (F-STOP)"))
-					]
-					+ SGridPanel::Slot(1, 3).Padding(0.0f, 4.0f)
-					[
-						MakeFloatField(&Iris, 0.7f, 64.0f)
-					]
-					+ SGridPanel::Slot(0, 4).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("FocusLabel", "FOCUS DISTANCE (CM)"))
-					]
-					+ SGridPanel::Slot(1, 4).Padding(0.0f, 4.0f)
-					[
-						MakeFloatField(&FocusDistanceCm, 1.0f, 1000000.0f)
-					]
-					+ SGridPanel::Slot(0, 5).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("GainLabel", "GAIN (DB)"))
-					]
-					+ SGridPanel::Slot(1, 5).Padding(0.0f, 4.0f)
-					[
-						MakeFloatField(&GainDb, -12.0f, 36.0f)
-					]
-					+ SGridPanel::Slot(0, 6).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("PositionLabel", "WORLD POSITION (CM)"))
-					]
-					+ SGridPanel::Slot(1, 6).Padding(0.0f, 4.0f)
-					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 6.0f, 0.0f)[MakePositionField(LOCTEXT("PositionX", "X"), &WorldPosition.X)]
-						+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 6.0f, 0.0f)[MakePositionField(LOCTEXT("PositionY", "Y"), &WorldPosition.Y)]
-						+ SHorizontalBox::Slot().FillWidth(1.0f)[MakePositionField(LOCTEXT("PositionZ", "Z"), &WorldPosition.Z)]
-					]
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 12.0f)
-				[
-					SNew(SSeparator)
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("ViscaHeading", "VISCA OVER IP CONTROL"))
-					.Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 4.0f, 0.0f, 0.0f)
-				[
-					SNew(SGridPanel)
-					.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid(); })
-					.FillColumn(1, 1.0f)
-					+ SGridPanel::Slot(0, 0).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("ViscaEnabledLabel", "ENABLE VISCA IP"))
-					]
-					+ SGridPanel::Slot(1, 0).Padding(0.0f, 4.0f)
-					[
-						SNew(SCheckBox)
-						.IsChecked_Lambda([this]() { return bViscaEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-						.OnCheckStateChanged_Lambda([this](const ECheckBoxState State) { bViscaEnabled = State == ECheckBoxState::Checked; })
-						[
-							SNew(STextBlock).Text(LOCTEXT("ViscaUdpLabel", "Send Sony VISCA commands over UDP"))
-						]
-					]
-					+ SGridPanel::Slot(0, 1).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("ViscaIpLabel", "CAMERA IP ADDRESS"))
-					]
-					+ SGridPanel::Slot(1, 1).Padding(0.0f, 4.0f)
-					[
-						SAssignNew(ViscaIpField, SEditableTextBox)
-						.HintText(LOCTEXT("ViscaIpHint", "192.168.1.100"))
-						.OnTextChanged_Lambda([this](const FText& Text) { ViscaIpAddress = Text.ToString(); })
-					]
-					+ SGridPanel::Slot(0, 2).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("ViscaPortLabel", "UDP PORT"))
-					]
-					+ SGridPanel::Slot(1, 2).Padding(0.0f, 4.0f)
-					[
-						SNew(SNumericEntryBox<int32>)
-						.MinValue(1).MaxValue(65535)
-						.Value_Lambda([this]() { return ViscaPort; })
-						.OnValueChanged_Lambda([this](const int32 Value) { ViscaPort = FMath::Clamp(Value, 1, 65535); })
-						.OnValueCommitted_Lambda([this](const int32 Value, ETextCommit::Type) { ViscaPort = FMath::Clamp(Value, 1, 65535); })
-					]
-					+ SGridPanel::Slot(0, 3).Padding(0.0f, 4.0f, 12.0f, 4.0f).VAlign(VAlign_Center)
-					[
-						SNew(STextBlock).Text(LOCTEXT("ViscaSpeedLabel", "PAN / TILT SPEED"))
-					]
-					+ SGridPanel::Slot(1, 3).Padding(0.0f, 4.0f)
-					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 6.0f, 0.0f)
-						[
-							SNew(SNumericEntryBox<int32>)
-							.MinValue(1).MaxValue(24).MinSliderValue(1).MaxSliderValue(24)
-							.Value_Lambda([this]() { return ViscaPanSpeed; })
-							.OnValueChanged_Lambda([this](const int32 Value) { ViscaPanSpeed = FMath::Clamp(Value, 1, 24); })
-						]
-						+ SHorizontalBox::Slot().FillWidth(1.0f)
-						[
-							SNew(SNumericEntryBox<int32>)
-							.MinValue(1).MaxValue(20).MinSliderValue(1).MaxSliderValue(20)
-							.Value_Lambda([this]() { return ViscaTiltSpeed; })
-							.OnValueChanged_Lambda([this](const int32 Value) { ViscaTiltSpeed = FMath::Clamp(Value, 1, 20); })
-						]
-					]
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 14.0f, 0.0f, 0.0f)
-				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 6.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("ApplyPreview", "APPLY TO PREVIEW"))
-						.HAlign(HAlign_Center)
-						.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid(); })
-						.OnClicked(this, &STSAVCameraControllerTool::ApplyPreview)
-					]
-					+ SHorizontalBox::Slot().FillWidth(1.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("ApplyAndSend", "APPLY + SEND VISCA"))
-						.HAlign(HAlign_Center)
-						.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid(); })
-						.OnClicked(this, &STSAVCameraControllerTool::ApplyAndSendVisca)
-					]
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 6.0f, 0.0f, 0.0f)
-				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 6.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("ViscaHome", "VISCA HOME"))
-						.HAlign(HAlign_Center)
-						.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid() && bViscaEnabled; })
-						.OnClicked(this, &STSAVCameraControllerTool::SendViscaHome)
-					]
-					+ SHorizontalBox::Slot().FillWidth(1.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("ViscaStop", "VISCA STOP"))
-						.HAlign(HAlign_Center)
-						.IsEnabled_Lambda([this]() { return ActiveCamera.IsValid() && bViscaEnabled; })
-						.OnClicked(this, &STSAVCameraControllerTool::SendViscaStop)
-					]
-				]
-				+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(0.0f, 10.0f, 0.0f, 0.0f)
-				[
-					SNew(STextBlock)
-					.Text_Lambda([this]() { return StatusText; })
-					.ColorAndOpacity(this, &STSAVCameraControllerTool::GetStatusColor)
-					.AutoWrapText(true)
-				]
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+			[
+				SNew(STextBlock)
+				.Text_Lambda([this]() { return StatusText; })
+				.ColorAndOpacity(this, &STSAVCameraControllerTool::GetStatusColor)
+				.AutoWrapText(true)
 			]
 		]
 	];
@@ -388,119 +317,307 @@ void STSAVCameraControllerTool::Construct(const FArguments& InArgs)
 	RefreshCameraOptions();
 }
 
+TSharedRef<SWidget> STSAVCameraControllerTool::BuildCameraBank(const int32 SlotIndex)
+{
+	FCameraControlSlot& Slot = CameraSlots[SlotIndex];
+	auto Label = [](const FText& Text) -> TSharedRef<SWidget>
+	{
+		return SNew(STextBlock).Text(Text);
+	};
+
+	return SNew(SBorder)
+		.BorderImage(FAppStyle::GetBrush(TEXT("ToolPanel.GroupBorder")))
+		.Padding(10.0f)
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)
+			[
+				SNew(STextBlock)
+				.Text(FText::Format(LOCTEXT("CameraBankHeading", "CAMERA BANK {0}"), FText::AsNumber(SlotIndex + 1)))
+				.Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1.0f)
+				[
+					SAssignNew(Slot.CameraCombo, SComboBox<TSharedPtr<FCameraOption>>)
+					.OptionsSource(&CameraOptions)
+					.OnGenerateWidget(this, &STSAVCameraControllerTool::GenerateCameraOption)
+					.OnSelectionChanged_Lambda([this, SlotIndex](const TSharedPtr<FCameraOption> Item, const ESelectInfo::Type SelectionType)
+					{
+						CameraOptionChanged(Item, SelectionType, SlotIndex);
+					})
+					[
+						SNew(STextBlock).Text_Lambda([this, SlotIndex]() { return GetSlotCameraText(SlotIndex); })
+					]
+				]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(6.0f, 0.0f, 0.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("SelectInLevel", "Select"))
+					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
+					.OnClicked_Lambda([this, SlotIndex]() { return SelectSlotCamera(SlotIndex); })
+				]
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 5.0f, 0.0f, 6.0f)
+			[
+				SNew(STextBlock)
+				.Text_Lambda([this, SlotIndex]() { return GetSlotSummaryText(SlotIndex); })
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(SGridPanel)
+				.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
+				.FillColumn(1, 1.0f)
+				+ SGridPanel::Slot(0, 0).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("NameLabel", "NAME"))]
+				+ SGridPanel::Slot(1, 0).Padding(0.0f, 3.0f)
+				[
+					SAssignNew(Slot.CameraNameField, SEditableTextBox)
+					.OnTextChanged_Lambda([this, SlotIndex](const FText& Text) { CameraSlots[SlotIndex].CameraName = Text.ToString(); })
+				]
+				+ SGridPanel::Slot(0, 1).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PanLabel", "PAN (DEG)"))]
+				+ SGridPanel::Slot(1, 1).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.PanDegrees, -170.0f, 170.0f, -170.0f, 170.0f)]
+				+ SGridPanel::Slot(0, 2).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("TiltLabel", "TILT (DEG)"))]
+				+ SGridPanel::Slot(1, 2).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.TiltDegrees, -30.0f, 90.0f, -30.0f, 90.0f)]
+				+ SGridPanel::Slot(0, 3).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("ZoomLabel", "ZOOM (%)"))]
+				+ SGridPanel::Slot(1, 3).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.ZoomPercent, 0.0f, 100.0f, 0.0f, 100.0f)]
+				+ SGridPanel::Slot(0, 4).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("IrisLabel", "IRIS (F)"))]
+				+ SGridPanel::Slot(1, 4).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.Iris, 0.7f, 64.0f, 0.7f, 22.0f)]
+				+ SGridPanel::Slot(0, 5).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("FocusLabel", "FOCUS (CM)"))]
+				+ SGridPanel::Slot(1, 5).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeLogFloatControl(&Slot.FocusDistanceCm, 1.0f, 1000000.0f)]
+				+ SGridPanel::Slot(0, 6).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("GainLabel", "GAIN (DB)"))]
+				+ SGridPanel::Slot(1, 6).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeFloatControl(&Slot.GainDb, -12.0f, 36.0f, -12.0f, 36.0f)]
+				+ SGridPanel::Slot(0, 7).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PositionXLabel", "POSITION X"))]
+				+ SGridPanel::Slot(1, 7).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.X, -1000000.0, 1000000.0, -100000.0, 100000.0)]
+				+ SGridPanel::Slot(0, 8).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PositionYLabel", "POSITION Y"))]
+				+ SGridPanel::Slot(1, 8).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.Y, -1000000.0, 1000000.0, -100000.0, 100000.0)]
+				+ SGridPanel::Slot(0, 9).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PositionZLabel", "POSITION Z"))]
+				+ SGridPanel::Slot(1, 9).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeDoubleControl(&Slot.WorldPosition.Z, -1000000.0, 1000000.0, -100000.0, 100000.0)]
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f)
+			[
+				SNew(SSeparator)
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("ViscaHeading", "VISCA OVER IP"))
+				.Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 0.0f)
+			[
+				SNew(SGridPanel)
+				.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
+				.FillColumn(1, 1.0f)
+				+ SGridPanel::Slot(0, 0).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("ViscaEnabledLabel", "ENABLED"))]
+				+ SGridPanel::Slot(1, 0).Padding(0.0f, 3.0f)
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].bViscaEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+					.OnCheckStateChanged_Lambda([this, SlotIndex](const ECheckBoxState State) { CameraSlots[SlotIndex].bViscaEnabled = State == ECheckBoxState::Checked; })
+					[
+						SNew(STextBlock).Text(LOCTEXT("ViscaUdp", "Sony VISCA UDP"))
+					]
+				]
+				+ SGridPanel::Slot(0, 1).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("ViscaIpLabel", "IP ADDRESS"))]
+				+ SGridPanel::Slot(1, 1).Padding(0.0f, 3.0f)
+				[
+					SAssignNew(Slot.ViscaIpField, SEditableTextBox)
+					.OnTextChanged_Lambda([this, SlotIndex](const FText& Text) { CameraSlots[SlotIndex].ViscaIpAddress = Text.ToString(); })
+				]
+				+ SGridPanel::Slot(0, 2).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("ViscaPortLabel", "UDP PORT"))]
+				+ SGridPanel::Slot(1, 2).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaPort, 1, 65535)]
+				+ SGridPanel::Slot(0, 3).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("PanSpeedLabel", "PAN SPEED"))]
+				+ SGridPanel::Slot(1, 3).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaPanSpeed, 1, 24)]
+				+ SGridPanel::Slot(0, 4).Padding(0.0f, 3.0f, 8.0f, 3.0f).VAlign(VAlign_Center)[Label(LOCTEXT("TiltSpeedLabel", "TILT SPEED"))]
+				+ SGridPanel::Slot(1, 4).Padding(0.0f, 3.0f)[TSAVCameraControllerTool::Private::MakeIntControl(&Slot.ViscaTiltSpeed, 1, 20)]
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 8.0f, 0.0f, 0.0f)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 4.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ApplyPreview", "APPLY PREVIEW"))
+					.HAlign(HAlign_Center)
+					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
+					.OnClicked_Lambda([this, SlotIndex]() { return ApplySlotPreview(SlotIndex); })
+				]
+				+ SHorizontalBox::Slot().FillWidth(1.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ApplySend", "APPLY + SEND"))
+					.HAlign(HAlign_Center)
+					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid(); })
+					.OnClicked_Lambda([this, SlotIndex]() { return ApplySlotAndSend(SlotIndex); })
+				]
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1.0f).Padding(0.0f, 0.0f, 4.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ViscaHome", "VISCA HOME"))
+					.HAlign(HAlign_Center)
+					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid() && CameraSlots[SlotIndex].bViscaEnabled; })
+					.OnClicked_Lambda([this, SlotIndex]() { return SendSlotHome(SlotIndex); })
+				]
+				+ SHorizontalBox::Slot().FillWidth(1.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ViscaStop", "VISCA STOP"))
+					.HAlign(HAlign_Center)
+					.IsEnabled_Lambda([this, SlotIndex]() { return CameraSlots[SlotIndex].Camera.IsValid() && CameraSlots[SlotIndex].bViscaEnabled; })
+					.OnClicked_Lambda([this, SlotIndex]() { return SendSlotStop(SlotIndex); })
+				]
+			]
+		];
+}
+
 void STSAVCameraControllerTool::RefreshCameraOptions()
 {
-	ATSAVCameraActor* Previous = ActiveCamera.Get();
+	TArray<TWeakObjectPtr<ATSAVCameraActor>> Previous;
+	Previous.Reserve(CameraSlots.Num());
+	for (const FCameraControlSlot& Slot : CameraSlots)
+	{
+		Previous.Add(Slot.Camera);
+	}
+
 	CameraOptions.Reset();
+	CameraOptions.Add(MakeShared<FCameraOption>());
+	TArray<ATSAVCameraActor*> Cameras;
 	if (GEditor)
 	{
 		if (UWorld* World = GEditor->GetEditorWorldContext().World())
 		{
 			for (TActorIterator<ATSAVCameraActor> It(World); It; ++It)
 			{
-				CameraOptions.Add(MakeShared<FCameraOption>(*It));
+				Cameras.Add(*It);
 			}
 		}
 	}
-	CameraOptions.Sort([](const TSharedPtr<FCameraOption>& Left, const TSharedPtr<FCameraOption>& Right)
+	Cameras.Sort([](const ATSAVCameraActor& Left, const ATSAVCameraActor& Right)
 	{
-		return TSAVCameraControllerTool::Private::GetCameraDisplayName(Left.IsValid() ? Left->Get() : nullptr)
-			< TSAVCameraControllerTool::Private::GetCameraDisplayName(Right.IsValid() ? Right->Get() : nullptr);
+		return Left.GetActorLabel() < Right.GetActorLabel();
 	});
-	if (CameraCombo)
+	for (ATSAVCameraActor* Camera : Cameras)
 	{
-		CameraCombo->RefreshOptions();
+		CameraOptions.Add(MakeShared<FCameraOption>(Camera));
 	}
 
-	ATSAVCameraActor* Next = nullptr;
-	if (Previous && CameraOptions.ContainsByPredicate([Previous](const TSharedPtr<FCameraOption>& Item)
+	for (FCameraControlSlot& Slot : CameraSlots)
 	{
-		return Item.IsValid() && Item->Get() == Previous;
-	}))
-	{
-		Next = Previous;
+		if (Slot.CameraCombo)
+		{
+			Slot.CameraCombo->RefreshOptions();
+		}
+		Slot.Camera.Reset();
 	}
-	else if (ATSAVCameraActor* Selected = FindSelectedCamera())
-	{
-		Next = Selected;
-	}
-	else if (!CameraOptions.IsEmpty())
-	{
-		Next = CameraOptions[0]->Get();
-	}
-	SetActiveCamera(Next);
-	if (Next)
-	{
-		SetStatus(FText::Format(LOCTEXT("Ready", "Controlling {0}."), FText::FromString(Next->GetActorLabel())), true);
-	}
-	else
-	{
-		SetStatus(LOCTEXT("NoCameras", "No TSAV cameras were found. Use Tools > TSAV Camera Tool to create one."), false);
-	}
-}
 
-void STSAVCameraControllerTool::SetActiveCamera(ATSAVCameraActor* Camera)
-{
-	ActiveCamera = Camera;
-	if (CameraCombo && Camera)
+	TSet<ATSAVCameraActor*> Assigned;
+	for (int32 Index = 0; Index < CameraSlots.Num(); ++Index)
 	{
+		ATSAVCameraActor* Camera = Previous.IsValidIndex(Index) ? Previous[Index].Get() : nullptr;
+		if (Camera && Cameras.Contains(Camera) && !Assigned.Contains(Camera))
+		{
+			CameraSlots[Index].Camera = Camera;
+			Assigned.Add(Camera);
+		}
+	}
+	if (Assigned.IsEmpty())
+	{
+		for (int32 Index = 0; Index < CameraSlots.Num() && Index < Cameras.Num(); ++Index)
+		{
+			CameraSlots[Index].Camera = Cameras[Index];
+			Assigned.Add(Cameras[Index]);
+		}
+	}
+
+	for (int32 Index = 0; Index < CameraSlots.Num(); ++Index)
+	{
+		ATSAVCameraActor* Camera = CameraSlots[Index].Camera.Get();
 		const TSharedPtr<FCameraOption>* Match = CameraOptions.FindByPredicate([Camera](const TSharedPtr<FCameraOption>& Item)
 		{
 			return Item.IsValid() && Item->Get() == Camera;
 		});
-		if (Match && CameraCombo->GetSelectedItem() != *Match)
+		if (CameraSlots[Index].CameraCombo && Match)
 		{
-			CameraCombo->SetSelectedItem(*Match);
+			CameraSlots[Index].CameraCombo->SetSelectedItem(*Match);
 		}
+		LoadSlotFromCamera(Index);
 	}
-	else if (CameraCombo)
-	{
-		CameraCombo->ClearSelection();
-	}
-	LoadFormFromCamera();
+
+	SetStatus(FText::Format(
+		LOCTEXT("Refreshed", "Found {0} camera(s); {1} assigned to controller banks."),
+		FText::AsNumber(Cameras.Num()), FText::AsNumber(GetAssignedCameraCount())), !Cameras.IsEmpty());
 }
 
-void STSAVCameraControllerTool::LoadFormFromCamera()
+void STSAVCameraControllerTool::SetSlotCamera(const int32 SlotIndex, ATSAVCameraActor* Camera)
 {
-	ATSAVCameraActor* Camera = ActiveCamera.Get();
-	if (!Camera)
+	if (!CameraSlots.IsValidIndex(SlotIndex))
 	{
-		CameraName.Reset();
-		if (CameraNameField) { CameraNameField->SetText(FText::GetEmpty()); }
-		if (ViscaIpField) { ViscaIpField->SetText(FText::GetEmpty()); }
 		return;
 	}
-	CameraName = Camera->GetActorLabel();
-	PanDegrees = Camera->PanDegrees;
-	TiltDegrees = Camera->TiltDegrees;
-	ZoomPercent = Camera->ZoomNormalized * 100.0f;
-	Iris = Camera->Aperture;
-	FocusDistanceCm = Camera->FocusDistanceCm;
-	GainDb = Camera->GainDb;
-	WorldPosition = Camera->GetActorLocation();
-	bViscaEnabled = Camera->bEnableViscaOverIp;
-	ViscaIpAddress = Camera->ViscaIpAddress;
-	ViscaPort = Camera->ViscaPort;
-	ViscaPanSpeed = Camera->ViscaPanSpeed;
-	ViscaTiltSpeed = Camera->ViscaTiltSpeed;
-	if (CameraNameField) { CameraNameField->SetText(FText::FromString(CameraName)); }
-	if (ViscaIpField) { ViscaIpField->SetText(FText::FromString(ViscaIpAddress)); }
-}
-
-ATSAVCameraActor* STSAVCameraControllerTool::FindSelectedCamera() const
-{
-	if (!GEditor || !GEditor->GetSelectedActors())
+	if (Camera)
 	{
-		return nullptr;
-	}
-	for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
-	{
-		if (ATSAVCameraActor* Camera = Cast<ATSAVCameraActor>(*It))
+		for (int32 OtherIndex = 0; OtherIndex < CameraSlots.Num(); ++OtherIndex)
 		{
-			return Camera;
+			if (OtherIndex != SlotIndex && CameraSlots[OtherIndex].Camera.Get() == Camera)
+			{
+				CameraSlots[OtherIndex].Camera.Reset();
+				LoadSlotFromCamera(OtherIndex);
+				if (CameraSlots[OtherIndex].CameraCombo && !CameraOptions.IsEmpty())
+				{
+					CameraSlots[OtherIndex].CameraCombo->SetSelectedItem(CameraOptions[0]);
+				}
+			}
 		}
 	}
-	return nullptr;
+	CameraSlots[SlotIndex].Camera = Camera;
+	LoadSlotFromCamera(SlotIndex);
+}
+
+void STSAVCameraControllerTool::LoadSlotFromCamera(const int32 SlotIndex)
+{
+	if (!CameraSlots.IsValidIndex(SlotIndex))
+	{
+		return;
+	}
+	FCameraControlSlot& Slot = CameraSlots[SlotIndex];
+	ATSAVCameraActor* Camera = Slot.Camera.Get();
+	if (!Camera)
+	{
+		Slot.CameraName.Reset();
+		if (Slot.CameraNameField) { Slot.CameraNameField->SetText(FText::GetEmpty()); }
+		if (Slot.ViscaIpField) { Slot.ViscaIpField->SetText(FText::GetEmpty()); }
+		return;
+	}
+	Slot.CameraName = Camera->GetActorLabel();
+	Slot.PanDegrees = Camera->PanDegrees;
+	Slot.TiltDegrees = Camera->TiltDegrees;
+	Slot.ZoomPercent = Camera->ZoomNormalized * 100.0f;
+	Slot.Iris = Camera->Aperture;
+	Slot.FocusDistanceCm = Camera->FocusDistanceCm;
+	Slot.GainDb = Camera->GainDb;
+	Slot.WorldPosition = Camera->GetActorLocation();
+	Slot.bViscaEnabled = Camera->bEnableViscaOverIp;
+	Slot.ViscaIpAddress = Camera->ViscaIpAddress;
+	Slot.ViscaPort = Camera->ViscaPort;
+	Slot.ViscaPanSpeed = Camera->ViscaPanSpeed;
+	Slot.ViscaTiltSpeed = Camera->ViscaTiltSpeed;
+	if (Slot.CameraNameField) { Slot.CameraNameField->SetText(FText::FromString(Slot.CameraName)); }
+	if (Slot.ViscaIpField) { Slot.ViscaIpField->SetText(FText::FromString(Slot.ViscaIpAddress)); }
+}
+
+void STSAVCameraControllerTool::CameraOptionChanged(
+	const TSharedPtr<FCameraOption> Item,
+	ESelectInfo::Type SelectionType,
+	const int32 SlotIndex)
+{
+	SetSlotCamera(SlotIndex, Item.IsValid() ? Item->Get() : nullptr);
 }
 
 TSharedRef<SWidget> STSAVCameraControllerTool::GenerateCameraOption(const TSharedPtr<FCameraOption> Item) const
@@ -509,58 +626,62 @@ TSharedRef<SWidget> STSAVCameraControllerTool::GenerateCameraOption(const TShare
 		TSAVCameraControllerTool::Private::GetCameraDisplayName(Item.IsValid() ? Item->Get() : nullptr)));
 }
 
-void STSAVCameraControllerTool::CameraOptionChanged(const TSharedPtr<FCameraOption> Item, ESelectInfo::Type SelectionType)
+FText STSAVCameraControllerTool::GetSlotCameraText(const int32 SlotIndex) const
 {
-	SetActiveCamera(Item.IsValid() ? Item->Get() : nullptr);
+	return FText::FromString(TSAVCameraControllerTool::Private::GetCameraDisplayName(
+		CameraSlots.IsValidIndex(SlotIndex) ? CameraSlots[SlotIndex].Camera.Get() : nullptr));
 }
 
-FText STSAVCameraControllerTool::GetActiveCameraText() const
+FText STSAVCameraControllerTool::GetSlotSummaryText(const int32 SlotIndex) const
 {
-	return FText::FromString(TSAVCameraControllerTool::Private::GetCameraDisplayName(ActiveCamera.Get()));
-}
-
-FText STSAVCameraControllerTool::GetCameraSummaryText() const
-{
-	const ATSAVCameraActor* Camera = ActiveCamera.Get();
+	const ATSAVCameraActor* Camera = CameraSlots.IsValidIndex(SlotIndex) ? CameraSlots[SlotIndex].Camera.Get() : nullptr;
 	if (!Camera)
 	{
-		return LOCTEXT("NoCameraSelected", "No camera selected");
+		return LOCTEXT("EmptyBank", "No camera assigned");
 	}
 	return FText::Format(
-		LOCTEXT("CameraSummary", "Type: {0}   |   Output: {1} x {2}   |   VISCA: {3}"),
+		LOCTEXT("CameraSummary", "{0}  |  {1} x {2}  |  VISCA {3}"),
 		TSAVCameraControllerTool::Private::GetCameraTypeDisplayName(Camera->CameraType),
 		FText::AsNumber(Camera->OutputResolution.X), FText::AsNumber(Camera->OutputResolution.Y),
-		Camera->bEnableViscaOverIp ? LOCTEXT("ViscaOn", "Enabled") : LOCTEXT("ViscaOff", "Disabled"));
+		Camera->bEnableViscaOverIp ? LOCTEXT("ViscaOn", "On") : LOCTEXT("ViscaOff", "Off"));
 }
 
-bool STSAVCameraControllerTool::ApplyChanges(const bool bSendVisca)
+bool STSAVCameraControllerTool::ApplySlot(const int32 SlotIndex, const bool bSendVisca, const bool bUpdateStatus)
 {
-	ATSAVCameraActor* Camera = ActiveCamera.Get();
-	if (!Camera)
+	if (!CameraSlots.IsValidIndex(SlotIndex))
 	{
-		SetStatus(LOCTEXT("ApplyNoCamera", "Select a camera before applying controls."), false);
 		return false;
 	}
-	FString ResolvedName = CameraNameField ? CameraNameField->GetText().ToString().TrimStartAndEnd() : CameraName.TrimStartAndEnd();
+	FCameraControlSlot& Slot = CameraSlots[SlotIndex];
+	ATSAVCameraActor* Camera = Slot.Camera.Get();
+	if (!Camera)
+	{
+		return false;
+	}
+	FString ResolvedName = Slot.CameraNameField
+		? Slot.CameraNameField->GetText().ToString().TrimStartAndEnd()
+		: Slot.CameraName.TrimStartAndEnd();
 	if (ResolvedName.IsEmpty())
 	{
 		ResolvedName = Camera->GetActorLabel();
 	}
-	ViscaIpAddress = ViscaIpField ? ViscaIpField->GetText().ToString().TrimStartAndEnd() : ViscaIpAddress.TrimStartAndEnd();
+	Slot.ViscaIpAddress = Slot.ViscaIpField
+		? Slot.ViscaIpField->GetText().ToString().TrimStartAndEnd()
+		: Slot.ViscaIpAddress.TrimStartAndEnd();
 
 	const FScopedTransaction Transaction(FText::Format(
 		LOCTEXT("ApplyTransaction", "Control Camera {0}"), FText::FromString(Camera->GetActorLabel())));
 	Camera->Modify();
 	Camera->SetActorLabel(ResolvedName);
 	Camera->CameraLabel = FText::FromString(ResolvedName);
-	Camera->bEnableViscaOverIp = bViscaEnabled;
-	Camera->ViscaIpAddress = ViscaIpAddress;
-	Camera->ViscaPort = FMath::Clamp(ViscaPort, 1, 65535);
-	Camera->ViscaPanSpeed = FMath::Clamp(ViscaPanSpeed, 1, 24);
-	Camera->ViscaTiltSpeed = FMath::Clamp(ViscaTiltSpeed, 1, 20);
-	Camera->SetActorLocation(WorldPosition, false, nullptr, ETeleportType::TeleportPhysics);
-	Camera->ApplyPTZ(PanDegrees, TiltDegrees, ZoomPercent / 100.0f, false);
-	Camera->ApplyImageControls(Iris, FocusDistanceCm, GainDb, false);
+	Camera->bEnableViscaOverIp = Slot.bViscaEnabled;
+	Camera->ViscaIpAddress = Slot.ViscaIpAddress;
+	Camera->ViscaPort = FMath::Clamp(Slot.ViscaPort, 1, 65535);
+	Camera->ViscaPanSpeed = FMath::Clamp(Slot.ViscaPanSpeed, 1, 24);
+	Camera->ViscaTiltSpeed = FMath::Clamp(Slot.ViscaTiltSpeed, 1, 20);
+	Camera->SetActorLocation(Slot.WorldPosition, false, nullptr, ETeleportType::TeleportPhysics);
+	Camera->ApplyPTZ(Slot.PanDegrees, Slot.TiltDegrees, Slot.ZoomPercent / 100.0f, false);
+	Camera->ApplyImageControls(Slot.Iris, Slot.FocusDistanceCm, Slot.GainDb, false);
 	Camera->PostEditChange();
 	Camera->MarkPackageDirty();
 
@@ -571,24 +692,25 @@ bool STSAVCameraControllerTool::ApplyChanges(const bool bSendVisca)
 			&& Camera->SendViscaPtzControls()
 			&& Camera->SendViscaImageControls();
 	}
-	LoadFormFromCamera();
-	if (CameraCombo)
+	LoadSlotFromCamera(SlotIndex);
+	if (bUpdateStatus)
 	{
-		CameraCombo->RefreshOptions();
+		if (bSendVisca && !bSent)
+		{
+			SetStatus(FText::Format(
+				LOCTEXT("ViscaSendFailed", "Updated bank {0}, but VISCA could not send. Check Enabled, IPv4 address, and UDP port."),
+				FText::AsNumber(SlotIndex + 1)), false);
+		}
+		else
+		{
+			SetStatus(FText::Format(
+				bSendVisca
+					? LOCTEXT("AppliedAndSent", "Updated {0} and sent all controls over VISCA UDP.")
+					: LOCTEXT("AppliedPreview", "Updated the Unreal preview for {0}; no network commands were sent."),
+				FText::FromString(ResolvedName)), true);
+		}
 	}
-	if (bSendVisca && !bSent)
-	{
-		SetStatus(FText::Format(
-			LOCTEXT("ViscaSendFailed", "Updated {0}, but VISCA could not send. Enable VISCA and check the IPv4 address and UDP port."),
-			FText::FromString(ResolvedName)), false);
-		return false;
-	}
-	SetStatus(FText::Format(
-		bSendVisca
-			? LOCTEXT("AppliedAndSent", "Updated {0} and sent pan, tilt, zoom, iris, focus, and gain over VISCA UDP.")
-			: LOCTEXT("AppliedPreview", "Updated the Unreal preview for {0}. No network commands were sent."),
-		FText::FromString(ResolvedName)), true);
-	return true;
+	return !bSendVisca || bSent;
 }
 
 FReply STSAVCameraControllerTool::RefreshCameras()
@@ -597,23 +719,47 @@ FReply STSAVCameraControllerTool::RefreshCameras()
 	return FReply::Handled();
 }
 
-FReply STSAVCameraControllerTool::UseSelectedCamera()
+FReply STSAVCameraControllerTool::UseSelectedCameras()
 {
-	if (ATSAVCameraActor* Camera = FindSelectedCamera())
+	if (!GEditor || !GEditor->GetSelectedActors())
 	{
-		SetActiveCamera(Camera);
-		SetStatus(FText::Format(LOCTEXT("UsingSelected", "Controlling selected camera {0}."), FText::FromString(Camera->GetActorLabel())), true);
+		return FReply::Handled();
 	}
-	else
+	TArray<ATSAVCameraActor*> Selected;
+	for (FSelectionIterator It(*GEditor->GetSelectedActors()); It && Selected.Num() < 4; ++It)
 	{
-		SetStatus(LOCTEXT("SelectionNotCamera", "Select a TSAV Production Camera in the level first."), false);
+		if (ATSAVCameraActor* Camera = Cast<ATSAVCameraActor>(*It))
+		{
+			Selected.AddUnique(Camera);
+		}
 	}
+	if (Selected.IsEmpty())
+	{
+		SetStatus(LOCTEXT("NoSelectedCameras", "Select one to four TSAV Production Cameras in the level first."), false);
+		return FReply::Handled();
+	}
+	for (int32 Index = 0; Index < CameraSlots.Num(); ++Index)
+	{
+		ATSAVCameraActor* Camera = Selected.IsValidIndex(Index) ? Selected[Index] : nullptr;
+		CameraSlots[Index].Camera = Camera;
+		const TSharedPtr<FCameraOption>* Match = CameraOptions.FindByPredicate([Camera](const TSharedPtr<FCameraOption>& Item)
+		{
+			return Item.IsValid() && Item->Get() == Camera;
+		});
+		if (CameraSlots[Index].CameraCombo && Match)
+		{
+			CameraSlots[Index].CameraCombo->SetSelectedItem(*Match);
+		}
+		LoadSlotFromCamera(Index);
+	}
+	SetStatus(FText::Format(LOCTEXT("LoadedSelected", "Loaded {0} selected camera(s) into the controller banks."), FText::AsNumber(Selected.Num())), true);
 	return FReply::Handled();
 }
 
-FReply STSAVCameraControllerTool::SelectCameraInLevel()
+FReply STSAVCameraControllerTool::SelectSlotCamera(const int32 SlotIndex)
 {
-	if (ATSAVCameraActor* Camera = ActiveCamera.Get(); GEditor && Camera)
+	ATSAVCameraActor* Camera = CameraSlots.IsValidIndex(SlotIndex) ? CameraSlots[SlotIndex].Camera.Get() : nullptr;
+	if (GEditor && Camera)
 	{
 		GEditor->SelectNone(false, true, false);
 		GEditor->SelectActor(Camera, true, true, true);
@@ -621,40 +767,82 @@ FReply STSAVCameraControllerTool::SelectCameraInLevel()
 	return FReply::Handled();
 }
 
-FReply STSAVCameraControllerTool::ApplyPreview()
+FReply STSAVCameraControllerTool::ApplySlotPreview(const int32 SlotIndex)
 {
-	ApplyChanges(false);
+	ApplySlot(SlotIndex, false);
 	return FReply::Handled();
 }
 
-FReply STSAVCameraControllerTool::ApplyAndSendVisca()
+FReply STSAVCameraControllerTool::ApplySlotAndSend(const int32 SlotIndex)
 {
-	ApplyChanges(true);
+	ApplySlot(SlotIndex, true);
 	return FReply::Handled();
 }
 
-FReply STSAVCameraControllerTool::SendViscaHome()
+FReply STSAVCameraControllerTool::ApplyAllPreviews()
 {
-	if (ApplyChanges(false))
+	const FScopedTransaction Transaction(LOCTEXT("ApplyAllPreviewTransaction", "Control All Assigned Cameras"));
+	int32 Applied = 0;
+	for (int32 Index = 0; Index < CameraSlots.Num(); ++Index)
 	{
-		ATSAVCameraActor* Camera = ActiveCamera.Get();
+		if (CameraSlots[Index].Camera.IsValid() && ApplySlot(Index, false, false))
+		{
+			++Applied;
+		}
+	}
+	SetStatus(FText::Format(
+		LOCTEXT("AppliedAllPreview", "Updated {0} camera preview(s); no network commands were sent."),
+		FText::AsNumber(Applied)), Applied > 0);
+	return FReply::Handled();
+}
+
+FReply STSAVCameraControllerTool::ApplyAllAndSend()
+{
+	const FScopedTransaction Transaction(LOCTEXT("ApplyAllViscaTransaction", "Control All Assigned Cameras and Send VISCA"));
+	int32 Applied = 0;
+	int32 Failed = 0;
+	for (int32 Index = 0; Index < CameraSlots.Num(); ++Index)
+	{
+		if (!CameraSlots[Index].Camera.IsValid())
+		{
+			continue;
+		}
+		++Applied;
+		if (!ApplySlot(Index, true, false))
+		{
+			++Failed;
+		}
+	}
+	SetStatus(FText::Format(
+		Failed == 0
+			? LOCTEXT("AppliedAllVisca", "Updated and sent VISCA controls to {0} camera(s).")
+			: LOCTEXT("AppliedAllViscaFailed", "Updated {0} camera(s), but VISCA send failed for {1}. Check each bank's connection settings."),
+		FText::AsNumber(Applied), FText::AsNumber(Failed)), Applied > 0 && Failed == 0);
+	return FReply::Handled();
+}
+
+FReply STSAVCameraControllerTool::SendSlotHome(const int32 SlotIndex)
+{
+	if (ApplySlot(SlotIndex, false, false))
+	{
+		ATSAVCameraActor* Camera = CameraSlots[SlotIndex].Camera.Get();
 		const bool bSent = Camera && Camera->SendViscaHome();
 		SetStatus(bSent
-			? LOCTEXT("HomeSent", "VISCA Home command sent over UDP.")
-			: LOCTEXT("HomeFailed", "VISCA Home could not send. Check the enabled state, IPv4 address, and UDP port."), bSent);
+			? FText::Format(LOCTEXT("HomeSent", "Bank {0}: VISCA Home sent."), FText::AsNumber(SlotIndex + 1))
+			: FText::Format(LOCTEXT("HomeFailed", "Bank {0}: VISCA Home could not send."), FText::AsNumber(SlotIndex + 1)), bSent);
 	}
 	return FReply::Handled();
 }
 
-FReply STSAVCameraControllerTool::SendViscaStop()
+FReply STSAVCameraControllerTool::SendSlotStop(const int32 SlotIndex)
 {
-	if (ApplyChanges(false))
+	if (ApplySlot(SlotIndex, false, false))
 	{
-		ATSAVCameraActor* Camera = ActiveCamera.Get();
+		ATSAVCameraActor* Camera = CameraSlots[SlotIndex].Camera.Get();
 		const bool bSent = Camera && Camera->SendViscaStop();
 		SetStatus(bSent
-			? LOCTEXT("StopSent", "VISCA Stop command sent over UDP.")
-			: LOCTEXT("StopFailed", "VISCA Stop could not send. Check the enabled state, IPv4 address, and UDP port."), bSent);
+			? FText::Format(LOCTEXT("StopSent", "Bank {0}: VISCA Stop sent."), FText::AsNumber(SlotIndex + 1))
+			: FText::Format(LOCTEXT("StopFailed", "Bank {0}: VISCA Stop could not send."), FText::AsNumber(SlotIndex + 1)), bSent);
 	}
 	return FReply::Handled();
 }
@@ -669,5 +857,29 @@ FSlateColor STSAVCameraControllerTool::GetStatusColor() const
 {
 	return bStatusSuccess ? FLinearColor(0.35f, 0.85f, 0.45f) : FLinearColor(1.0f, 0.55f, 0.20f);
 }
+
+int32 STSAVCameraControllerTool::GetAssignedCameraCount() const
+{
+	int32 Count = 0;
+	for (const FCameraControlSlot& Slot : CameraSlots)
+	{
+		Count += Slot.Camera.IsValid() ? 1 : 0;
+	}
+	return Count;
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FTSAVCameraControllerWidgetConstructionTest,
+	"TSAV.Editor.CameraController.ConstructsFourBanks",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTSAVCameraControllerWidgetConstructionTest::RunTest(const FString& Parameters)
+{
+	const TSharedRef<STSAVCameraControllerTool> Controller = SNew(STSAVCameraControllerTool);
+	TestEqual(TEXT("Camera controller has a root widget"), Controller->GetChildren()->Num(), 1);
+	return true;
+}
+#endif
 
 #undef LOCTEXT_NAMESPACE

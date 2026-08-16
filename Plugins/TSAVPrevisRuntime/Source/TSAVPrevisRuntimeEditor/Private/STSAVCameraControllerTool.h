@@ -9,7 +9,7 @@
 class SEditableTextBox;
 template <typename OptionType> class SComboBox;
 
-/** Central editor controller for every TSAV camera, including VISCA-over-IP PTZ output. */
+/** Four-bank editor controller for TSAV cameras, including VISCA-over-IP PTZ output. */
 class STSAVCameraControllerTool final : public SCompoundWidget
 {
 public:
@@ -21,43 +21,51 @@ public:
 private:
 	using FCameraOption = TWeakObjectPtr<ATSAVCameraActor>;
 
+	struct FCameraControlSlot
+	{
+		TWeakObjectPtr<ATSAVCameraActor> Camera;
+		TSharedPtr<SComboBox<TSharedPtr<FCameraOption>>> CameraCombo;
+		TSharedPtr<SEditableTextBox> CameraNameField;
+		TSharedPtr<SEditableTextBox> ViscaIpField;
+		FString CameraName;
+		float PanDegrees = 0.0f;
+		float TiltDegrees = 0.0f;
+		float ZoomPercent = 0.0f;
+		float Iris = 2.8f;
+		float FocusDistanceCm = 1000.0f;
+		float GainDb = 0.0f;
+		FVector WorldPosition = FVector::ZeroVector;
+		bool bViscaEnabled = false;
+		FString ViscaIpAddress = TEXT("192.168.1.100");
+		int32 ViscaPort = 52381;
+		int32 ViscaPanSpeed = 12;
+		int32 ViscaTiltSpeed = 10;
+	};
+
+	TSharedRef<SWidget> BuildCameraBank(int32 SlotIndex);
 	void RefreshCameraOptions();
-	void SetActiveCamera(ATSAVCameraActor* Camera);
-	void LoadFormFromCamera();
-	ATSAVCameraActor* FindSelectedCamera() const;
+	void SetSlotCamera(int32 SlotIndex, ATSAVCameraActor* Camera);
+	void LoadSlotFromCamera(int32 SlotIndex);
+	void CameraOptionChanged(TSharedPtr<FCameraOption> Item, ESelectInfo::Type SelectionType, int32 SlotIndex);
 	TSharedRef<SWidget> GenerateCameraOption(TSharedPtr<FCameraOption> Item) const;
-	void CameraOptionChanged(TSharedPtr<FCameraOption> Item, ESelectInfo::Type SelectionType);
-	FText GetActiveCameraText() const;
-	FText GetCameraSummaryText() const;
+	FText GetSlotCameraText(int32 SlotIndex) const;
+	FText GetSlotSummaryText(int32 SlotIndex) const;
+	bool ApplySlot(int32 SlotIndex, bool bSendVisca, bool bUpdateStatus = true);
 	FReply RefreshCameras();
-	FReply UseSelectedCamera();
-	FReply SelectCameraInLevel();
-	FReply ApplyPreview();
-	FReply ApplyAndSendVisca();
-	FReply SendViscaHome();
-	FReply SendViscaStop();
-	bool ApplyChanges(bool bSendVisca);
+	FReply UseSelectedCameras();
+	FReply SelectSlotCamera(int32 SlotIndex);
+	FReply ApplySlotPreview(int32 SlotIndex);
+	FReply ApplySlotAndSend(int32 SlotIndex);
+	FReply ApplyAllPreviews();
+	FReply ApplyAllAndSend();
+	FReply SendSlotHome(int32 SlotIndex);
+	FReply SendSlotStop(int32 SlotIndex);
 	void SetStatus(const FText& Message, bool bSuccess);
 	FSlateColor GetStatusColor() const;
+	int32 GetAssignedCameraCount() const;
 
-	TWeakObjectPtr<ATSAVCameraActor> ActiveCamera;
 	TArray<TSharedPtr<FCameraOption>> CameraOptions;
-	TSharedPtr<SComboBox<TSharedPtr<FCameraOption>>> CameraCombo;
-	TSharedPtr<SEditableTextBox> CameraNameField;
-	TSharedPtr<SEditableTextBox> ViscaIpField;
-	FString CameraName;
-	float PanDegrees = 0.0f;
-	float TiltDegrees = 0.0f;
-	float ZoomPercent = 0.0f;
-	float Iris = 2.8f;
-	float FocusDistanceCm = 1000.0f;
-	float GainDb = 0.0f;
-	FVector WorldPosition = FVector::ZeroVector;
-	bool bViscaEnabled = false;
-	FString ViscaIpAddress = TEXT("192.168.1.100");
-	int32 ViscaPort = 52381;
-	int32 ViscaPanSpeed = 12;
-	int32 ViscaTiltSpeed = 10;
+	TArray<FCameraControlSlot> CameraSlots;
 	FText StatusText;
 	bool bStatusSuccess = true;
 };
