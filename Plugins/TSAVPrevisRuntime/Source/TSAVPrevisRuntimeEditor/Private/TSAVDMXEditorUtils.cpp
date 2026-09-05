@@ -243,6 +243,9 @@ bool TSAVDMXEditorUtils::SendAttributeValue(
 		return false;
 	}
 	Patch->SendDMX(AttributeValues);
+	FDMXNormalizedAttributeValueMap PreviewValues;
+	PreviewValues.Map.Add(FDMXAttributeName(AttributeName), FMath::Clamp(NormalizedValue, 0.0f, 1.0f));
+	for (ATSAVDMXFixture* Fixture : FindMatchingActors(Definition)) Fixture->ApplyAttributeValues(PreviewValues);
 	return true;
 }
 
@@ -258,7 +261,7 @@ TArray<ATSAVDMXFixture*> TSAVDMXEditorUtils::FindMatchingActors(const FTSAVDMXFi
 	for (TActorIterator<ATSAVDMXFixture> It(World); It; ++It)
 	{
 		ATSAVDMXFixture* Fixture = *It;
-		if (Fixture && (Fixture->FixtureDefinitionId == Definition.DefinitionId || Fixture->GetFixturePatch() == Patch))
+		if (Fixture && (Patch ? Fixture->GetFixturePatch() == Patch : Fixture->FixtureDefinitionId == Definition.DefinitionId))
 		{
 			Result.Add(Fixture);
 		}

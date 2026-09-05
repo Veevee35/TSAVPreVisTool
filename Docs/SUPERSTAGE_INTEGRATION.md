@@ -1,5 +1,7 @@
 # SuperStage in TSAV PreVis
 
+The current development direction is independent TSAV functionality. Use `Start-TSAVPreVis.cmd` for native tools with SuperStage disabled; see [native feature coverage](TSAV_NATIVE_FEATURES.md). The instructions below describe the optional vendor integration, which retains its vendor account requirements.
+
 ## Start the integrated editor
 
 Double-click `Start-TSAVSuperStage.cmd` in the project root. In Unreal, open **Tools > TSAV SuperStage** for the installed vendor panels, lighting library, and content browser shortcuts. The original SuperStage toolbar and Window menu remain the entry points for its complete workflows. Sign in through the vendor's own panel to activate the features included in your account.
@@ -11,6 +13,31 @@ For a different engine location or to compile TSAV before opening it:
 ```
 
 Close any existing editor for this project first. SuperStage's shader module must load during engine startup; it cannot be added safely to an editor session that is already running.
+
+## Patch lights from the TSAV Lighting Console
+
+Open **Tools > TSAV Lighting Console** in the integrated editor. Placed SuperStage fixtures appear alongside the TSAV catalog, with their fixture ID, universe, starting channel, and complete channel footprint. **Show placed fixtures only** and **Select Placed** help work with the current scene.
+
+1. Check the fixtures to patch. The last individually checked fixture becomes the primary fixture, whose current address and mode attributes appear on the right.
+2. Enter **Universe** and **Start address**, then click **Patch selected in list order**. A batch follows the displayed list order, uses consecutive channels, and rolls subsequent fixtures into the next universe when necessary. The first fixture must fit at the address you entered.
+3. The entire batch is checked for overlaps and valid channel footprints before applying it. SuperStage supports internal universes 1–512. An unplaced TSAV catalog template does not reserve space against a batch consisting entirely of SuperStage actors; placed TSAV actors do.
+4. TSAV writes the SuperStage actor's actual `SuperDMXFixture` property and synchronizes its imported console patch. **Sync scene patch with SuperStage console** explicitly scans and imports the scene if it has not been imported yet. Existing imported records retain their console IDs.
+5. **Save All** persists actor, catalog, and library changes. Patch edits support Unreal Undo. Scene patch changes made with the vendor tools appear in TSAV while this panel is open, including after Undo.
+
+Both TSAV scene rows and SuperStage rows represent individual placed actors. Patching a TSAV scene row creates a separate native DMX patch; a TSAV catalog row edits its shared library template. Selecting both kinds of actors does not convert one into the other.
+
+The programmer uses the native DMX library for TSAV rows and the vendor console's reflected DMX API for SuperStage rows. SuperStage's internal console ID is resolved from the actor GUID; the scene's displayed FixtureID is a different identifier. Unimported or stale vendor patches are rejected before sending. Enable **SuperStage console output enabled** to use the vendor output path. Raw dimmer faders respect TSAV's grand master and blackout. Rebuilding or changing selection retains all mode faders.
+
+Native TSAV output universes must also be covered by a DMX output port in **Project Settings > DMX**. The patch action reports a missing port range. SuperStage network configuration is separate; its input/output protocol, adapter, and universe offsets are controlled by the vendor's **SuperDMX** panel. See the [vendor network configuration](https://yunsio.com/docs/stagecore/dmx-network-configuration).
+
+### Activation and the first light check
+
+This workstation has not yet been signed into and activated through SuperStage. The shared patch and console-value checks work, but fixture output has not been established. The isolated fixture probe reported zero registered/evaluated fixtures and no raw channel readback. That observation alone does not identify activation as the cause.
+
+1. Start with `Start-TSAVSuperStage.cmd`, open the vendor panel, and sign in to activate the account's license or trial. Activation is handled by the vendor account, as described in its [installation guide](https://yunsio.com/docs/get-started/installation).
+2. Place a SuperStage fixture definition, select a valid mode, and set its control mode to **DMX**. Select that placed row in TSAV, set its universe/address, and apply the patch.
+3. Enable **SuperStage console output enabled**. In SuperConsole's settings, confirm the same fixture/address on the Patch page, then test its dimmer. The vendor's [console documentation](https://yunsio.com/docs/console) distinguishes console output, which drives the internal fixture buffer, from network output, which is only needed for external devices.
+4. Once the vendor console controls the light, test the same fixture from TSAV and confirm dimmer, blackout, and address changes in the viewport. This visual acceptance check remains outstanding; a successful patch or programmer-value update does not confirm light output.
 
 ## Installed distribution
 
@@ -40,7 +67,7 @@ The complete `SuperStage_UE58_26H2.6.rar` distribution is installed at `Plugins/
 | SuperTools | Editor tools |
 | SuperConsole | Editor console |
 
-Presence of a module does not establish account entitlement or full feature functionality. The existing TSAV LED tools, cameras, switcher, DMX tools, and standalone application retain their implementations. SuperStage tools operate on their own actor types; TSAV switcher routing and `.tsav` persistence have not been adapted to arbitrary SuperStage actors.
+Presence of a module does not establish account entitlement or full feature functionality. The TSAV Lighting Console includes the editor patch bridge described above. SuperStage tools operate on their own actor types; TSAV switcher routing and `.tsav` persistence have not been adapted to arbitrary SuperStage actors.
 
 ## Why this uses a launcher
 
@@ -75,16 +102,27 @@ The installer rejects unsafe archive paths/links, verifies extraction with 7-Zip
 - TSAV editor compiled with the integration enabled in its editor module.
 - The Win64 Development standalone target also compiled successfully, with SuperStage excluded.
 - All ten SuperStage DLLs loaded in the hidden editor smoke run, and the bundled NDI DLL initialized.
-- The automated Unreal test `TSAV.SuperStage.EditorIntegration` checks module loading, representative actor registration, TSAV menu registration, native panel discovery, and the mounted content library. Run with SuperStage enabled at editor startup.
-- The test passed (1 success, 0 failures), confirmed all 9,586 registered assets, and found the VAT Generator panel. Other panels and licensed workflows remain available through the vendor UI as enabled by the account; they were not functionally tested. The TSAV submenu mirrors only panels the vendor exposes to Unreal's public menu-spawner list.
+- `TSAV.SuperStage.EditorIntegration` checks module loading, representative actor registration, TSAV menu registration, native panel discovery, and the mounted content library. It confirms all 9,586 registered assets and finds the VAT Generator panel. The TSAV submenu mirrors only panels exposed to Unreal's public menu-spawner list.
+- `TSAV.LightingConsole.PatchPlan` checks consecutive patching, universe rollover, exact starting address, overlap rejection, channel footprints, and universe limits.
+- `TSAV.SuperStage.SharedPatch` checks actual vendor actor patching, imported console records, internal console ID resolution, Undo, external address refresh, native/vendor raw fader rebuilding, output enable/disable, and grand master/blackout values at the vendor console API. These checks exercise a temporary actor in the unattended Entry map and do not save the user's scene or repack the native catalog.
+- `TSAV.SuperStage.FixtureOutputProbe` is a separate, optional diagnostic that requires a working vendor session. It checks fixture registration/evaluation and raw dimmer/blackout readback. It currently fails on this unactivated workstation. A component's authored intensity is not used as proof of rendered output. Passing this probe would still require the viewport acceptance check above.
+- Latest combined run: the three integration/patch tests passed; the fixture-output probe failed (zero registered/evaluated fixtures, raw readback `-1`). Report: `Saved/SuperStageReview/Run-60cfe17184f0404fa3470547e9b0c923/index.json`.
 - Added the missing `GameFeatureData` Asset Manager rule required by the enabled editor plugin stack; the subsequent run had no logged startup errors.
 - No external DMX console, NDI sender, laser hardware, or vendor account entitlement is exercised by these checks. A NullRHI load check does not validate rendered lighting/effects.
 
-Run the same automated test after building the editor:
+Run the three integration and patch tests after building the editor:
 
 ```powershell
 .\Build\Test-SuperStage.ps1 -EditorSmoke
 ```
+
+Repeat the additional fixture diagnostic after activation:
+
+```powershell
+.\Build\Test-SuperStage.ps1 -EditorSmoke -FixtureOutputProbe -RenderSmoke
+```
+
+The smoke process uses a temporary map and its own vendor network defaults, with network output disabled and a loopback-only destination. The script prints explicitly when fixture output has not been checked. It never signs in or changes account entitlement.
 
 The supplied vendor assets log warnings for the missing `Super/Projector/LT_Maping` texture and legacy `EInfiniteRotationMode::Stop` values in Aurora Fan assets. The complete extraction was verified; these references originate in the supplied release. No vendor assets were rewritten to conceal them. External NDI senders that are offline also produce the existing TSAV media warnings.
 

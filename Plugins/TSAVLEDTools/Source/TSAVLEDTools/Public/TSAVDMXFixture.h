@@ -201,6 +201,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|DMX")
 	void SetFixturePatch(UDMXEntityFixturePatch* FixturePatch);
 
+	/** Creates a separate patch for this placed fixture before changing its address. */
+	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|DMX")
+	bool SetIndividualPatchAddress(int32 Universe, int32 Address);
+
+	/** Apply partial programmer input without resetting attributes absent from the update. */
+	void ApplyAttributeValues(const FDMXNormalizedAttributeValueMap& Values, bool bSnap = false);
+
 	/** Applies a generated catalog option, including model, articulation, beam, and default DMX patch. */
 	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|Definition")
 	bool ApplyFixtureDefinition(const FTSAVDMXFixtureDefinition& Definition, bool bApplyDefaultPatch = true);
@@ -238,6 +245,10 @@ protected:
 #endif
 
 private:
+	/** Library-owned patch reference, serialized with the actor and tracked by Undo. */
+	UPROPERTY()
+	TObjectPtr<UDMXEntityFixturePatch> IndividualPatch;
+
 	UFUNCTION()
 	void OnFixturePatchReceived(UDMXEntityFixturePatch* FixturePatch, const FDMXNormalizedAttributeValueMap& ValuePerAttribute);
 

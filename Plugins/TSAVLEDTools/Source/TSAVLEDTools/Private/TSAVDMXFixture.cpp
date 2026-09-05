@@ -9,6 +9,7 @@
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXImportGDTF.h"
 #include "Library/DMXLibrary.h"
+#include "EngineUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TSAVDMXFixture)
 
@@ -116,11 +117,52 @@ void ATSAVDMXFixture::ApplyPreviewValues()
 
 void ATSAVDMXFixture::SetFixturePatch(UDMXEntityFixturePatch* FixturePatch)
 {
+	if (FixturePatch != IndividualPatch) IndividualPatch = nullptr;
 	if (DMXComponent)
 	{
 		DMXComponent->SetFixturePatch(FixturePatch);
 		DMXComponent->SetReceiveDMXFromPatch(true);
 	}
+}
+
+bool ATSAVDMXFixture::SetIndividualPatchAddress(const int32 Universe, const int32 Address)
+{
+	UDMXEntityFixturePatch* Patch = GetFixturePatch();
+	UDMXLibrary* Library = Patch ? Patch->GetParentLibrary() : nullptr;
+	const int32 Span = Patch ? Patch->GetChannelSpan() : 0;
+	if (!Library || !Patch->GetActiveMode() || !Patch->GetFixtureType()
+		|| Universe < 1 || Universe > 63999 || Address < 1 || Span < 1 || Address + Span - 1 > 512) return false;
+	bool bNeedsOwnPatch = Patch != IndividualPatch;
+	if (GetWorld())
+	{
+		for (TActorIterator<ATSAVDMXFixture> It(GetWorld()); It; ++It)
+		{
+			if (*It != this && It->GetFixturePatch() == Patch) { bNeedsOwnPatch = true; break; }
+		}
+	}
+	Modify();
+	DMXComponent->Modify();
+	Library->Modify();
+	if (bNeedsOwnPatch)
+	{
+		FDMXEntityFixturePatchConstructionParams Params;
+		Params.FixtureTypeRef = FDMXEntityFixtureTypeRef(Patch->GetFixtureType());
+		Params.ActiveMode = Patch->GetActiveModeIndex();
+		Params.UniverseID = Universe;
+		Params.StartingAddress = Address;
+		IndividualPatch = UDMXEntityFixturePatch::CreateFixturePatchInLibrary(Params, TEXT("TSAV Scene Fixture"));
+		if (!IndividualPatch) return false;
+		SetFixturePatch(IndividualPatch);
+	}
+	else
+	{
+		Patch->Modify();
+		Patch->SetUniverseID(Universe);
+		Patch->SetStartingChannel(Address);
+	}
+	MarkPackageDirty();
+	Library->MarkPackageDirty();
+	return GetFixturePatch()->GetUniverseID() == Universe && GetFixturePatch()->GetStartingChannel() == Address;
 }
 
 bool ATSAVDMXFixture::ApplyFixtureDefinition(const FTSAVDMXFixtureDefinition& Definition, const bool bApplyDefaultPatch)
@@ -200,9 +242,19 @@ UDMXEntityFixturePatch* ATSAVDMXFixture::GetFixturePatch() const
 
 void ATSAVDMXFixture::OnFixturePatchReceived(UDMXEntityFixturePatch* FixturePatch, const FDMXNormalizedAttributeValueMap& ValuePerAttribute)
 {
-	float PanValue = 0.5f;
-	float TiltValue = 0.5f;
-	float DimmerValue = LastDimmerValue;
+	ApplyAttributeValues(ValuePerAttribute);
+}
+
+void ATSAVDMXFixture::ApplyAttributeValues(const FDMXNormalizedAttributeValueMap& ValuePerAttribute, const bool bSnap)
+{
+	const auto NormalizedAxis = [](float Target, float Offset, float Minimum, float Maximum, bool bInvert)
+	{
+		const float Value = FMath::IsNearlyEqual(Minimum, Maximum) ? 0.5f : FMath::Clamp((Target - Offset - Minimum) / (Maximum - Minimum), 0.0f, 1.0f);
+		return bInvert ? 1.0f - Value : Value;
+	};
+	float PanValue = NormalizedAxis(TargetPanDegrees, PanOffsetDegrees, PanMinDegrees, PanMaxDegrees, bInvertPan);
+	float TiltValue = NormalizedAxis(TargetTiltDegrees, TiltOffsetDegrees, TiltMinDegrees, TiltMaxDegrees, bInvertTilt);
+	float DimmerValue = TargetDimmer;
 	float ZoomValue = TargetZoom;
 	float RedValue = TargetColor.R;
 	float GreenValue = TargetColor.G;
@@ -216,9 +268,10 @@ void ATSAVDMXFixture::OnFixturePatchReceived(UDMXEntityFixturePatch* FixturePatc
 	const bool bHasRed = FindAttributeValue(ValuePerAttribute, RedAttribute, { TEXT("coloraddr"), TEXT("colorrgbred"), TEXT("red") }, RedValue);
 	const bool bHasGreen = FindAttributeValue(ValuePerAttribute, GreenAttribute, { TEXT("coloraddg"), TEXT("colorrgbgreen"), TEXT("green") }, GreenValue);
 	const bool bHasBlue = FindAttributeValue(ValuePerAttribute, BlueAttribute, { TEXT("coloraddb"), TEXT("colorrgbblue"), TEXT("blue") }, BlueValue);
-	const FLinearColor Color = bHasRed || bHasGreen || bHasBlue ? FLinearColor(RedValue, GreenValue, BlueValue) : DefaultLightColor;
+	const FLinearColor Color = bHasRed || bHasGreen || bHasBlue ? FLinearColor(RedValue, GreenValue, BlueValue) : TargetColor;
 
 	SetTargetsFromNormalized(PanValue, TiltValue, DimmerValue, Color, ZoomValue);
+	ApplyMotionAndBeam(0.0f, bSnap);
 }
 
 void ATSAVDMXFixture::ApplyModelSetup()

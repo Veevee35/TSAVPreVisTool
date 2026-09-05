@@ -82,6 +82,7 @@ namespace TSAVSuperStageIntegration
 
 	void RegisterMenus()
 	{
+		if (!IsAvailable()) return;
 		UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Tools"))
 			->FindOrAddSection(TEXT("TSAVPrevis")).AddSubMenu(
 				TEXT("TSAVSuperStage"), LOCTEXT("SuperStage", "TSAV SuperStage"),

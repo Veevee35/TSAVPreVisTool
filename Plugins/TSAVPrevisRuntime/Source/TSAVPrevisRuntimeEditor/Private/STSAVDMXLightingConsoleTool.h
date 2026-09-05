@@ -18,6 +18,12 @@ struct FTSAVDMXConsoleListItem
 	int32 Universe = 1;
 	int32 Address = 1;
 	int32 ActorCount = 0;
+	int32 Span = 0;
+	int32 FixtureId = 0;
+	bool bSuperStage = false;
+	bool bNativeActor = false;
+	TWeakObjectPtr<AActor> Actor;
+	FString ModeSignature;
 };
 
 /** Programmer-style multi-fixture editor console backed by the complete generated DMX library. */
@@ -28,9 +34,14 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+	virtual void Tick(const FGeometry& Geometry, double CurrentTime, float DeltaTime) override;
 
 private:
-	void RefreshRows();
+	friend class FTSAVSuperStagePatchTest;
+	friend class FTSAVNativeLightingTest;
+	bool GetRowDefinition(const FTSAVDMXConsoleListItem& Row, FTSAVDMXFixtureDefinition& Out) const;
+	FReply PlaceSelectedClicked();
+	void RefreshRows(bool bReloadCatalog = true);
 	void ApplyFilter();
 	TSharedRef<ITableRow> GenerateFixtureRow(TSharedPtr<FTSAVDMXConsoleListItem> Item, const TSharedRef<STableViewBase>& OwnerTable);
 	void SearchChanged(const FText& Text);
@@ -39,6 +50,12 @@ private:
 	TSharedRef<SWidget> MakeCommonControl(const FText& Label, float* Value);
 	void SendCommonValues();
 	void SendAttributeValue(FName AttributeName, float Value);
+	void AddAttributeFader(FName AttributeName, const FString& Label, int32 Instance = INDEX_NONE);
+	TSharedPtr<FTSAVDMXConsoleListItem> GetPrimaryRow() const;
+	FReply ApplyPatchClicked();
+	FReply SyncSuperStageClicked();
+	FReply UsePrimaryPatchClicked();
+	FText GetPatchSummary() const;
 	void RebuildAttributeFaders();
 	const struct FTSAVDMXFixtureDefinition* FindDefinition(FName DefinitionId) const;
 	FReply RefreshClicked();
@@ -71,4 +88,10 @@ private:
 	bool bBlackout = false;
 	FText StatusText;
 	bool bStatusSuccess = true;
+	FName PrimaryId;
+	int32 EditedUniverse = 1;
+	int32 EditedAddress = 1;
+	bool bSceneOnly = false;
+	bool bPatchDraftDirty = false;
+	float RefreshElapsed = 0.0f;
 };

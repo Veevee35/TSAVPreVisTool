@@ -2,6 +2,8 @@ param(
     [string] $UnrealRoot = 'C:\UE_5.8',
     [switch] $AsObject,
     [switch] $EditorSmoke,
+    [switch] $RenderSmoke,
+    [switch] $FixtureOutputProbe,
     [ValidateRange(30, 1800)]
     [int] $TimeoutSeconds = 300
 )
@@ -40,18 +42,36 @@ $TsavResult = [pscustomobject]@{
 if ($AsObject) { return $TsavResult }
 $TsavResult | Format-List
 if ($EditorSmoke) {
+    $TsavExpectedTests = @('TSAV.SuperStage.EditorIntegration', 'TSAV.SuperStage.SharedPatch', 'TSAV.LightingConsole.PatchPlan')
+    if ($FixtureOutputProbe) { $TsavExpectedTests += 'TSAV.SuperStage.FixtureOutputProbe' }
+    $TsavTestFilter = $TsavExpectedTests -join '+'
     $TsavRunPath = Join-Path $TsavRoot ('Saved\SuperStageReview\Run-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $TsavRunPath -Force | Out-Null
+    $TsavNetworkIni = Join-Path $TsavRunPath 'TestEditorPerProjectUserSettings.ini'
+    @'
+[/Script/SuperTools.SuperDMXEditorSettings]
+Protocol=ArtNet
+Input=(bEnabled=False,LocalIp="127.0.0.1",Port=13654,StartUniverse=1)
+Output=(bEnabled=False,LocalIp="127.0.0.1",RemoteIp="127.0.0.1",Port=13654,StartUniverse=1)
+'@ | Set-Content -LiteralPath $TsavNetworkIni -Encoding utf8
+    # Isolate both defaults and the generated user settings. A default-only
+    # override would still merge the operator's saved network configuration.
+    $TsavUserIni = Join-Path $TsavRunPath 'EditorPerProjectUserSettings.ini'
+    Copy-Item -LiteralPath $TsavNetworkIni -Destination $TsavUserIni
     $TsavProject = Join-Path $TsavRoot 'LiveEventTest.uproject'
     $TsavEditor = Join-Path $UnrealRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
     $TsavSmokeArgs = @(
         ('"' + $TsavProject + '"'),
-        '-EnablePlugins=SuperStage', '-Unattended', '-NullRHI', '-NoSound', '-NoSplash',
-        '-ExecCmds="Automation RunTests TSAV.SuperStage"',
+        '/Engine/Maps/Entry',
+        '-EnablePlugins=SuperStage', '-Unattended', '-NoSound', '-NoSplash',
+        ('-DEFEDITORPERPROJECTUSERSETTINGSINI="' + $TsavNetworkIni + '"'),
+        ('-EDITORPERPROJECTUSERSETTINGSINI="' + $TsavUserIni + '"'),
+        ('-ExecCmds="Automation RunTests ' + $TsavTestFilter + '"'),
         '-TestExit="Automation Test Queue Empty"',
         ('-ReportExportPath="' + $TsavRunPath + '"'),
         ('-abslog="' + (Join-Path $TsavRunPath 'editor.log') + '"')
     )
+    $TsavSmokeArgs += $(if ($RenderSmoke) { '-RenderOffscreen' } else { '-NullRHI' })
     $TsavSmokeProcess = Start-Process -FilePath $TsavEditor -ArgumentList $TsavSmokeArgs -WindowStyle Hidden -PassThru
     if (-not $TsavSmokeProcess.WaitForExit($TimeoutSeconds * 1000)) {
         Stop-Process -Id $TsavSmokeProcess.Id
@@ -60,10 +80,12 @@ if ($EditorSmoke) {
     $TsavReportFile = Join-Path $TsavRunPath 'index.json'
     if (-not (Test-Path -LiteralPath $TsavReportFile)) { throw "No automation report produced. See $TsavRunPath" }
     $TsavReport = Get-Content -LiteralPath $TsavReportFile -Raw | ConvertFrom-Json
-    $TsavIntegrationTest = @($TsavReport.tests | Where-Object { $_.fullTestPath -eq 'TSAV.SuperStage.EditorIntegration' })
-    if ($TsavSmokeProcess.ExitCode -ne 0 -or $TsavReport.failed -gt 0 -or
-        $TsavIntegrationTest.Count -ne 1 -or $TsavIntegrationTest[0].state -ne 'Success') {
+    $TsavPassedTests = @($TsavReport.tests | Where-Object { $_.fullTestPath -in $TsavExpectedTests -and $_.state -eq 'Success' })
+    if ($TsavSmokeProcess.ExitCode -ne 0 -or $TsavReport.failed -gt 0 -or $TsavPassedTests.Count -ne $TsavExpectedTests.Count) {
         throw "SuperStage smoke test failed. See $TsavRunPath"
     }
-    Write-Host "SuperStage module/menu/content smoke test passed. Report: $TsavReportFile"
+    Write-Host "SuperStage integration, shared patch, and lighting-console tests passed. Report: $TsavReportFile"
+    if (-not $FixtureOutputProbe) {
+        Write-Host 'Fixture output was not verified. After vendor activation, use -FixtureOutputProbe -RenderSmoke and confirm lighting in the viewport.'
+    }
 }
