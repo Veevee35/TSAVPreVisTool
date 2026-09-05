@@ -13,6 +13,8 @@ public class TSAVPrevisRuntimeEditor : ModuleRules
 			{
 				"Core",
 				"CoreUObject",
+				"ContentBrowser",
+				"AssetRegistry",
 				"DMXProtocol",
 				"DMXRuntime",
 				"Engine",
@@ -20,6 +22,7 @@ public class TSAVPrevisRuntimeEditor : ModuleRules
 				"LevelEditor",
 				"MediaAssets",
 				"PropertyEditor",
+				"Projects",
 				"Slate",
 				"SlateCore",
 				"ToolMenus",

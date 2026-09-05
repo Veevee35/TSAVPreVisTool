@@ -26,6 +26,9 @@ if (-not (Test-Path -LiteralPath $TsavRunUat)) {
 # from expanding a standalone cook. Runtime dependencies (DMX, NDI, media I/O,
 # Enhanced Input, and procedural meshes) remain enabled through the game receipt.
 $TsavEditorOnlyPlugins = @(
+    # The supplied SuperStage distribution has editor DLLs only, with no Source
+    # or non-editor link libraries. Load it through Start-TSAVSuperStage.ps1.
+    'SuperStage',
     'TSAVPrevisTools',
     'OpenXR',
     'VirtualScouting',

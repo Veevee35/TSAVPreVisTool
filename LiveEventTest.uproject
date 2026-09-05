@@ -13,6 +13,13 @@
 	],
 	"Plugins": [
 		{
+			"Name": "SuperStage",
+			"Enabled": false,
+			"Optional": true,
+			"TargetAllowList": [ "Editor" ],
+			"PlatformAllowList": [ "Win64" ]
+		},
+		{
 			"Name": "TSAVPrevisRuntime",
 			"Enabled": true
 		},

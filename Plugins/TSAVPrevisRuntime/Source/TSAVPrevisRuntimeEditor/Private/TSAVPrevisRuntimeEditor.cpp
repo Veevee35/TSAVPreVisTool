@@ -11,6 +11,7 @@
 #include "STSAVVideoSwitcherTool.h"
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
+#include "TSAVSuperStageIntegration.h"
 #include "Widgets/Docking/SDockTab.h"
 
 #define LOCTEXT_NAMESPACE "TSAVPrevisRuntimeEditor"
@@ -98,6 +99,7 @@ void FTSAVPrevisRuntimeEditorModule::ShutdownModule()
 void FTSAVPrevisRuntimeEditorModule::RegisterMenus()
 {
 	FToolMenuOwnerScoped OwnerScoped(this);
+	TSAVSuperStageIntegration::RegisterMenus();
 	UToolMenu* Menu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Tools"));
 	FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("TSAVPrevis"));
 	Section.AddMenuEntry(

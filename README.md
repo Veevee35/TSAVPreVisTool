@@ -2,6 +2,12 @@
 
 Unreal Engine tools for A/V production previsualization.
 
+## SuperStage editor integration
+
+Launch **Start-TSAVSuperStage.cmd** to open TSAV with the complete locally installed SuperStage 26H2.6 suite. **Tools > TSAV SuperStage** exposes its registered panels and content library alongside the existing TSAV tools. Activate licensed features through SuperStage's own sign-in panel. See [setup, validation, and runtime limitations](Docs/SUPERSTAGE_INTEGRATION.md).
+
+The supplied archive contains editor binaries without C++ build rules or standalone libraries. The launcher enables it at editor startup; normal TSAV builds and packaging keep it disabled. A vendor runtime SDK is required to include SuperStage in the standalone executable. Restore the local vendor files with `Build/Install-SuperStage.ps1 -ArchivePath <archive>`.
+
 ## Standalone TSAV PreVis application
 
 The packaged Unreal project is a runtime previs application, not an editor remote control. Phase 2 adds a runtime scene outliner and inspector, translate/rotate/scale gizmos, command-based undo/redo, object duplication/deletion, and versioned `.tsav` project save/load.

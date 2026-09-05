@@ -8,6 +8,9 @@ Saved/
 Plugins/*/Binaries/
 Plugins/*/Intermediate/
 
+# Locally installed vendor distribution; restore with Build/Install-SuperStage.ps1.
+Plugins/SuperStage/
+
 # IDE and local build metadata
 .vs/
 .idea/
@@ -23,4 +26,3 @@ Plugins/*/Intermediate/
 .DS_Store
 Thumbs.db
 Desktop.ini
-
