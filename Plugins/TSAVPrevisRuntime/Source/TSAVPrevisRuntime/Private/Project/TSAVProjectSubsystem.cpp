@@ -11,6 +11,7 @@
 #include "Interaction/TSAVSceneObjectComponent.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeExit.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -56,6 +57,18 @@ namespace TSAVProject::Private
 		Json->SetObjectField(TEXT("rotation"), RotationJson);
 		Json->SetObjectField(TEXT("scale"), VectorToJson(Transform.GetScale3D()));
 		return Json;
+	}
+
+	bool ValidTransformJson(const TSharedPtr<FJsonObject>& Json)
+	{
+		if (!Json) return true;
+		for (const TCHAR* Group : {TEXT("location"),TEXT("rotation"),TEXT("scale")}) {
+			const TSharedPtr<FJsonObject>* Object=nullptr;
+			if (!Json->TryGetObjectField(Group,Object)) return false;
+			const TArray<FString> Keys=FString(Group)==TEXT("rotation")?TArray<FString>{TEXT("pitch"),TEXT("yaw"),TEXT("roll")}:TArray<FString>{TEXT("x"),TEXT("y"),TEXT("z")};
+			for (const auto& Key : Keys) { double Value=0; if (!(*Object)->TryGetNumberField(Key,Value) || !FMath::IsFinite(Value)) return false; }
+		}
+		return true;
 	}
 
 	FTransform JsonToTransform(const TSharedPtr<FJsonObject>& Json)
@@ -204,7 +217,9 @@ bool UTSAVProjectSubsystem::SaveProject(const FString& FilePath)
 		UE_LOG(LogTSAVPrevisRuntime, Error, TEXT("Could not create TSAV project directory %s."), *TargetDirectory);
 		return false;
 	}
-	if (!FFileHelper::SaveStringToFile(Output, *TargetPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	const FString TempPath = TargetPath + TEXT(".tmp");
+	if (!FFileHelper::SaveStringToFile(Output, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)
+		|| !IFileManager::Get().Move(*TargetPath, *TempPath, true, true))
 	{
 		UE_LOG(LogTSAVPrevisRuntime, Error, TEXT("Could not write TSAV project file %s (system error %d)."), *TargetPath, FPlatformMisc::GetLastError());
 		return false;
@@ -232,8 +247,8 @@ bool UTSAVProjectSubsystem::LoadProject(const FString& FilePath)
 	{
 		return false;
 	}
-	const int32 FormatVersion = Root->GetIntegerField(TEXT("formatVersion"));
-	if (FormatVersion < 1 || FormatVersion > TSAVProject::Private::CurrentFormatVersion)
+	int32 FormatVersion = 0;
+	if (!Root->TryGetNumberField(TEXT("formatVersion"), FormatVersion) || FormatVersion < 1 || FormatVersion > TSAVProject::Private::CurrentFormatVersion)
 	{
 		return false;
 	}
@@ -246,64 +261,78 @@ bool UTSAVProjectSubsystem::LoadProject(const FString& FilePath)
 			ActorsToDestroy.Add(*It);
 		}
 	}
-	for (AActor* Actor : ActorsToDestroy)
-	{
-		Actor->Destroy();
-	}
-
 	const TSharedPtr<FJsonObject>* ProjectJson = nullptr;
-	if (Root->TryGetObjectField(TEXT("project"), ProjectJson) && ProjectJson && *ProjectJson)
-	{
-		FGuid::Parse((*ProjectJson)->GetStringField(TEXT("id")), ProjectId);
-		ProjectName = (*ProjectJson)->GetStringField(TEXT("name"));
-	}
-
+	FGuid LoadedProjectId; FString LoadedIdText, LoadedProjectName;
+	if (!Root->TryGetObjectField(TEXT("project"), ProjectJson)
+		|| !(*ProjectJson)->TryGetStringField(TEXT("id"), LoadedIdText) || !FGuid::Parse(LoadedIdText, LoadedProjectId) || !LoadedProjectId.IsValid()
+		|| !(*ProjectJson)->TryGetStringField(TEXT("name"), LoadedProjectName)) return false;
 	const TArray<TSharedPtr<FJsonValue>>* Objects = nullptr;
+	if (!Root->TryGetArrayField(TEXT("objects"), Objects)) return false;
+	// Stage and validate every replacement before destroying the current scene.
+	TArray<AActor*> StagedActors;
+	TSet<FGuid> SeenIds;
+	bool bCommitted = false;
+	const bool bWasDirty = bDirty;
+	ON_SCOPE_EXIT { if (!bCommitted) { for (AActor* Actor : StagedActors) Actor->Destroy(); bDirty = bWasDirty; } };
 	if (Root->TryGetArrayField(TEXT("objects"), Objects) && Objects)
 	{
 		for (const TSharedPtr<FJsonValue>& Value : *Objects)
 		{
-			const TSharedPtr<FJsonObject> ObjectJson = Value ? Value->AsObject() : nullptr;
+			const TSharedPtr<FJsonObject> ObjectJson = Value && Value->Type==EJson::Object ? Value->AsObject() : nullptr;
 			if (!ObjectJson)
 			{
-				continue;
+				return false;
 			}
-			UClass* ActorClass = LoadObject<UClass>(nullptr, *ObjectJson->GetStringField(TEXT("class")));
+			FString ClassPath, ObjectIdText; FGuid ObjectId;
+			if (!ObjectJson->TryGetStringField(TEXT("class"), ClassPath) || !ObjectJson->TryGetStringField(TEXT("id"), ObjectIdText)
+				|| !FGuid::Parse(ObjectIdText, ObjectId) || !ObjectId.IsValid() || SeenIds.Contains(ObjectId)) return false;
+			SeenIds.Add(ObjectId);
+			UClass* ActorClass = LoadObject<UClass>(nullptr, *ClassPath);
 			if (!ActorClass || !ActorClass->IsChildOf(AActor::StaticClass()))
 			{
-				continue;
+				return false;
 			}
 			FActorSpawnParameters SpawnParameters;
 			SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 			const TSharedPtr<FJsonObject>* TransformJson = nullptr;
 			ObjectJson->TryGetObjectField(TEXT("transform"), TransformJson);
+			if (!TSAVProject::Private::ValidTransformJson(TransformJson?*TransformJson:nullptr)) return false;
+			int32 ObjectType=0;
+			if (!ObjectJson->TryGetNumberField(TEXT("type"),ObjectType) || !StaticEnum<ETSAVObjectType>()->IsValidEnumValue(ObjectType)) return false;
+			const TSharedPtr<FJsonObject>* Properties = nullptr; FString DisplayName; bool bLocked=false,bVisible=true;
+			if (ObjectJson->TryGetObjectField(TEXT("properties"),Properties)
+				&& (!(*Properties)->TryGetStringField(TEXT("displayName"),DisplayName) || !(*Properties)->TryGetBoolField(TEXT("locked"),bLocked) || !(*Properties)->TryGetBoolField(TEXT("visible"),bVisible))) return false;
 			AActor* Actor = World->SpawnActor<AActor>(ActorClass, TSAVProject::Private::JsonToTransform(TransformJson ? *TransformJson : nullptr), SpawnParameters);
+			if (Actor) StagedActors.Add(Actor);
 			UTSAVSceneObjectComponent* SceneObject = UTSAVSceneObjectComponent::EnsureForActor(Actor);
 			if (!SceneObject)
 			{
-				if (Actor) { Actor->Destroy(); }
-				continue;
+				return false;
 			}
-			FGuid::Parse(ObjectJson->GetStringField(TEXT("id")), SceneObject->ObjectId);
-			SceneObject->ObjectType = static_cast<ETSAVObjectType>(ObjectJson->GetIntegerField(TEXT("type")));
-			const TSharedPtr<FJsonObject>* Properties = nullptr;
-			if (ObjectJson->TryGetObjectField(TEXT("properties"), Properties) && Properties && *Properties)
+			SceneObject->ObjectId = ObjectId;
+			SceneObject->ObjectType = static_cast<ETSAVObjectType>(ObjectType);
+			if (Properties && *Properties)
 			{
-				SceneObject->DisplayName = FText::FromString((*Properties)->GetStringField(TEXT("displayName")));
-				SceneObject->bLocked = (*Properties)->GetBoolField(TEXT("locked"));
-				SceneObject->SetObjectVisible((*Properties)->GetBoolField(TEXT("visible")));
+				SceneObject->DisplayName = FText::FromString(DisplayName);
+				SceneObject->bLocked = bLocked;
+				SceneObject->SetObjectVisible(bVisible);
 			}
 			FString CustomState;
 			if (ObjectJson->TryGetStringField(TEXT("customState"), CustomState) && !CustomState.IsEmpty())
 			{
 				if (ITSAVStateSerializable* Serializable = Cast<ITSAVStateSerializable>(Actor))
 				{
-					Serializable->RestoreTSAVState(CustomState);
+					if (!Serializable->RestoreTSAVState(CustomState)) return false;
 				}
+				else return false;
 			}
 		}
 	}
 
+	for (AActor* Actor : ActorsToDestroy) Actor->Destroy();
+	bCommitted = true;
+	ProjectId = LoadedProjectId;
+	ProjectName = LoadedProjectName;
 	// Resolve cross-actor video routes after every switcher and camera has been restored.
 	for (TActorIterator<ATSAVMediaSurfaceActor> It(World); It; ++It)
 	{
@@ -323,5 +352,5 @@ bool UTSAVProjectSubsystem::LoadProject(const FString& FilePath)
 FString UTSAVProjectSubsystem::GetDefaultProjectPath() const
 {
 	const FString SafeProjectName = FPaths::MakeValidFileName(ProjectName.IsEmpty() ? TEXT("Untitled Show") : ProjectName);
-	return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("TSAV Projects"), SafeProjectName + TEXT(".tsav"));
+	return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("TSAV Projects"), SafeProjectName + TEXT(".tsav")));
 }

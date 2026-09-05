@@ -1,6 +1,11 @@
 // Copyright TSAV. All Rights Reserved.
 
 #include "UI/TSAVMainWidget.h"
+#include "UI/TSAVLightingShowWidget.h"
+#include "UI/TSAVRigWidget.h"
+#include "UI/TSAVDMXNetworkWidget.h"
+#include "UI/TSAVSceneBuilderWidget.h"
+#include "UI/TSAVLaserWidget.h"
 
 #include "TSAVPrevisRuntime.h"
 #include "Blueprint/WidgetTree.h"
@@ -565,6 +570,7 @@ void UTSAVMainWidget::ToggleMenu(const ETSAVTopMenu Menu, const float LeftPositi
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuDelete", "Delete Selection    Del"), ETSAVMenuAction::DeleteSelection, Selection != nullptr);
 		break;
 	case ETSAVTopMenu::Build:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuSceneBuilder", "Stage and Scenic Builder"), ETSAVMenuAction::OpenSceneBuilder);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuVenueFloor", "Add Venue Floor"), ETSAVMenuAction::AddVenueFloor);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuStageDeck", "Add Stage Deck"), ETSAVMenuAction::AddStageDeck);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuScenicCube", "Add Scenic Cube"), ETSAVMenuAction::AddScenicCube);
@@ -575,6 +581,10 @@ void UTSAVMainWidget::ToggleMenu(const ETSAVTopMenu Menu, const float LeftPositi
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLEDPanel", "Add LED Panel"), ETSAVMenuAction::AddLEDPanel);
 		break;
 	case ETSAVTopMenu::Lighting:
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLaserPreview", "Laser Preview and ILDA"), ETSAVMenuAction::OpenLaserPreview);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuRigTools", "Fixture Arrays and MVR / GDTF"), ETSAVMenuAction::OpenRigTools);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuDMXConnections", "DMX Connections and Monitor"), ETSAVMenuAction::OpenDMXConnections);
+		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuLightingShow", "Lighting Show Console"), ETSAVMenuAction::OpenLightingShow);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuDMXFixture", "Add DMX Fixture"), ETSAVMenuAction::AddDMXFixture);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuPointLight", "Add Point Light"), ETSAVMenuAction::AddPointLight);
 		AddMenuEntry(NSLOCTEXT("TSAVPreVis", "MenuSpotLight", "Add Spot Light"), ETSAVMenuAction::AddSpotLight);
@@ -815,7 +825,7 @@ void UTSAVMainWidget::ExecuteMenuAction(const ETSAVMenuAction Action)
 		break;
 	case ETSAVMenuAction::AddStageDeck:
 		SetAppMode(ETSAVAppMode::Stage);
-		SpawnAndSelect(ATSAVSceneObjectActor::StaticClass(), MakePlacementTransform(FVector(4.0f, 2.0f, 0.2f)),
+		SpawnAndSelect(ATSAVSceneGenerator::StaticClass(), MakePlacementTransform(),
 			NSLOCTEXT("TSAVPreVis", "NewStageDeck", "Stage Deck"), ETSAVObjectType::Stage);
 		break;
 	case ETSAVMenuAction::AddScenicCube:
@@ -823,8 +833,19 @@ void UTSAVMainWidget::ExecuteMenuAction(const ETSAVMenuAction Action)
 		break;
 	case ETSAVMenuAction::AddTrussSegment:
 		SetAppMode(ETSAVAppMode::Truss);
-		SpawnAndSelect(ATSAVSceneObjectActor::StaticClass(), MakePlacementTransform(FVector(3.0f, 0.15f, 0.15f)),
-			NSLOCTEXT("TSAVPreVis", "NewTrussSegment", "Truss Segment"), ETSAVObjectType::Truss);
+		if (auto* Builder=CreateWidget<UTSAVSceneBuilderWidget>(GetOwningPlayer())) { Builder->InitialKind=ETSAVScenicKind::Truss; Builder->AddToViewport(100); }
+		break;
+	case ETSAVMenuAction::OpenSceneBuilder:
+		if (auto* Builder=CreateWidget<UTSAVSceneBuilderWidget>(GetOwningPlayer())) Builder->AddToViewport(100);
+		break;
+	case ETSAVMenuAction::OpenLaserPreview:
+		if (auto* Laser=CreateWidget<UTSAVLaserWidget>(GetOwningPlayer())) Laser->AddToViewport(100);
+		break;
+	case ETSAVMenuAction::OpenRigTools:
+		if (auto* Rig=CreateWidget<UTSAVRigWidget>(GetOwningPlayer())) Rig->AddToViewport(100);
+		break;
+	case ETSAVMenuAction::OpenDMXConnections:
+		if (auto* Network=CreateWidget<UTSAVDMXNetworkWidget>(GetOwningPlayer())) Network->AddToViewport(100);
 		break;
 	case ETSAVMenuAction::AddLEDWall:
 	{
@@ -858,6 +879,10 @@ void UTSAVMainWidget::ExecuteMenuAction(const ETSAVMenuAction Action)
 	case ETSAVMenuAction::AddDMXFixture:
 		SetAppMode(ETSAVAppMode::Lighting);
 		OpenFixtureBrowser();
+		break;
+	case ETSAVMenuAction::OpenLightingShow:
+		SetAppMode(ETSAVAppMode::Lighting);
+		if (UTSAVLightingShowWidget* Console = CreateWidget<UTSAVLightingShowWidget>(GetOwningPlayer())) Console->AddToViewport(100);
 		break;
 	case ETSAVMenuAction::AddPointLight:
 		SetAppMode(ETSAVAppMode::Lighting);

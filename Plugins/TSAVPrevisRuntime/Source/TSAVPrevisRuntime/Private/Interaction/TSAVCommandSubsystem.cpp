@@ -122,6 +122,16 @@ public:
 
 namespace TSAVCommands::Private
 {
+	class FBatchCommand final : public UTSAVCommandSubsystem::ITSAVCommand
+	{
+	public:
+		TArray<TSharedPtr<UTSAVCommandSubsystem::ITSAVCommand>> Commands;
+		FText Description;
+		virtual void Execute() override { for (const auto& Command : Commands) Command->Execute(); }
+		virtual void Undo() override { for (int32 I=Commands.Num()-1; I>=0; --I) Commands[I]->Undo(); }
+		virtual FText GetDescription() const override { return Description; }
+		virtual AActor* GetAffectedActor() const override { return Commands.IsEmpty() ? nullptr : Commands[0]->GetAffectedActor(); }
+	};
 	class FSpawnCommand final : public UTSAVCommandSubsystem::ITSAVCommand
 	{
 	public:
@@ -372,6 +382,35 @@ bool UTSAVCommandSubsystem::CommitAppliedActorState(AActor* Actor, const FString
 	}
 	StoreApplied(MakeShared<TSAVCommands::Private::FCustomStateCommand>(Actor, BeforeState, AfterState, Description));
 	return true;
+}
+
+bool UTSAVCommandSubsystem::CommitAppliedActorStates(const TArray<AActor*>& Actors, const TArray<FString>& BeforeStates, const FText& Description)
+{
+	if (Actors.Num()!=BeforeStates.Num()) return false;
+	auto Batch=MakeShared<TSAVCommands::Private::FBatchCommand>(); Batch->Description=Description;
+	for (int32 I=0; I<Actors.Num(); ++I) {
+		auto* Serializable=IsValid(Actors[I]) ? Cast<ITSAVStateSerializable>(Actors[I]) : nullptr;
+		if (!Serializable) return false;
+		const FString After=Serializable->CaptureTSAVState();
+		if (After!=BeforeStates[I]) Batch->Commands.Add(MakeShared<TSAVCommands::Private::FCustomStateCommand>(Actors[I],BeforeStates[I],After,Description));
+	}
+	if (Batch->Commands.IsEmpty()) return false;
+	StoreApplied(Batch); return true;
+}
+
+bool UTSAVCommandSubsystem::CommitSpawnedActor(AActor* Actor,const FText& Description)
+{
+	if (!IsValid(Actor)) return false;
+	StoreApplied(MakeShared<TSAVCommands::Private::FSpawnCommand>(TSAVCommands::Private::FActorSnapshot::Capture(Actor),Description)); return true;
+}
+
+bool UTSAVCommandSubsystem::CommitSpawnedActors(const TArray<AActor*>& Actors,const FText& Description)
+{
+	if (Actors.IsEmpty()) return false;
+	for (auto* Actor : Actors) if (!IsValid(Actor)) return false;
+	auto Batch=MakeShared<TSAVCommands::Private::FBatchCommand>(); Batch->Description=Description;
+	for (auto* Actor : Actors) Batch->Commands.Add(MakeShared<TSAVCommands::Private::FSpawnCommand>(TSAVCommands::Private::FActorSnapshot::Capture(Actor),Description));
+	StoreApplied(Batch); return true;
 }
 
 void UTSAVCommandSubsystem::BeginTransformTransaction(AActor* Actor)

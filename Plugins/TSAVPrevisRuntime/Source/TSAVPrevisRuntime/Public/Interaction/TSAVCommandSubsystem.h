@@ -56,6 +56,10 @@ public:
 
 	/** Store an actor-specific state change that has already been applied by a tool. */
 	bool CommitAppliedActorState(AActor* Actor, const FString& BeforeState, const FText& Description);
+	/** Commit a multi-fixture edit as one runtime Undo/Redo operation. */
+	bool CommitAppliedActorStates(const TArray<AActor*>& Actors, const TArray<FString>& BeforeStates, const FText& Description);
+	bool CommitSpawnedActor(AActor* Actor, const FText& Description);
+	bool CommitSpawnedActors(const TArray<AActor*>& Actors, const FText& Description);
 
 	/** Begin/end collapse a live gizmo drag into one transform command. */
 	void BeginTransformTransaction(AActor* Actor);

@@ -38,6 +38,11 @@ enum class ETSAVMenuAction : uint8
 	ScaleTool,
 	ToggleCoordinateSpace,
 	FrameSelection,
+	OpenLightingShow,
+	OpenSceneBuilder,
+	OpenLaserPreview,
+	OpenRigTools,
+	OpenDMXConnections,
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FTSAVMenuActionClicked, ETSAVMenuAction, Action);

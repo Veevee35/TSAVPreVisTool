@@ -2,7 +2,17 @@
 
 Unreal Engine tools for A/V production previsualization.
 
-## SuperStage editor integration
+## Native TSAV show tools
+
+Launch **Start-TSAVPreVis.cmd** for the native workflow with SuperStage disabled. **Tools > TSAV Lighting Console** places and patches individual fixtures; its **Open Lighting Show** button opens the shared programmer and playback console. In the standalone application, use **Lighting > Lighting Show Console**.
+
+Native additions include groups, scoped presets, tracking cues, independent executors, fades, effects, timecode/timeline transport, output recording, optics, matrix cells, image pixel mapping, DMX connection setup, fixture arrays, GDTF/MVR fixture-rig interchange, parametric scenery/machinery, and ILDA laser preview. They join project persistence and runtime undo. See the [operator guide and supported formats](Docs/TSAV_NATIVE_FEATURES.md), including remaining limitations. Full vendor feature parity is not complete.
+
+After compiling the editor, run `Build/Test-TSAVLighting.ps1`. Add `-Render` for panel and optics captures. Create an updated standalone executable with `Build/Package-TSAVPreVis.ps1`; archived builds do not update automatically.
+
+The current native Development package is under `Saved/Packages/NativeSuiteDevelopment/Windows/LiveEventTest.exe`. `Build/Test-TSAVPackage.ps1` checks its runtime project persistence, undo and video routing in an isolated session. Build/test results are recorded in the operator guide.
+
+## Optional SuperStage editor integration
 
 Launch **Start-TSAVSuperStage.cmd** to open TSAV with the complete locally installed SuperStage 26H2.6 suite. **Tools > TSAV SuperStage** exposes its registered panels and content library alongside the existing TSAV tools. Activate licensed features through SuperStage's own sign-in panel. See [setup, validation, and runtime limitations](Docs/SUPERSTAGE_INTEGRATION.md).
 

@@ -14,6 +14,6 @@ namespace TSAVDMXPatchPlan
 		int32 MaxUniverse = 63999;
 	};
 	/** Preflight the whole batch; no actor or asset is modified on failure. */
-	bool Build(const TArray<FRange>& Selected, const TArray<FRange>& Occupied,
+	TSAVLEDTOOLS_API bool Build(const TArray<FRange>& Selected, const TArray<FRange>& Occupied,
 		int32 Universe, int32 Address, TArray<FRange>& OutPlan, FString& OutError);
 }

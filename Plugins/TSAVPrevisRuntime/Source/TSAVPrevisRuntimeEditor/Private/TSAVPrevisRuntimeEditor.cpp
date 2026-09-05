@@ -1,6 +1,12 @@
 // Copyright TSAV. All Rights Reserved.
 
 #include "TSAVPrevisRuntimeEditor.h"
+#include "Editor.h"
+#include "UI/STSAVLightingShowPanel.h"
+#include "UI/TSAVSceneBuilderWidget.h"
+#include "UI/TSAVRigWidget.h"
+#include "UI/TSAVDMXNetworkWidget.h"
+#include "UI/TSAVLaserWidget.h"
 
 #include "Framework/Application/SlateApplication.h"
 #include "STSAVCameraControllerTool.h"
@@ -28,6 +34,21 @@ namespace TSAVPrevisRuntimeEditor
 
 void FTSAVPrevisRuntimeEditorModule::StartupModule()
 {
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(TEXT("TSAVRigTools"),FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&) {
+		return SNew(SDockTab).TabRole(ETabRole::NomadTab)[MakeTSAVRigPanel(GEditor?GEditor->GetEditorWorldContext().World():nullptr,FSimpleDelegate())];
+	})).SetDisplayName(LOCTEXT("RigToolsTitle","TSAV Fixture Arrays and Rig Exchange")).SetMenuType(ETabSpawnerMenuType::Hidden);
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(TEXT("TSAVDMXConnections"),FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&) {
+		return SNew(SDockTab).TabRole(ETabRole::NomadTab)[MakeTSAVDMXNetworkPanel(GEditor?GEditor->GetEditorWorldContext().World():nullptr,FSimpleDelegate())];
+	})).SetDisplayName(LOCTEXT("DMXConnectionsTitle","TSAV DMX Connections and Monitor")).SetMenuType(ETabSpawnerMenuType::Hidden);
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(TEXT("TSAVLaserPreview"),FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&) {
+		return SNew(SDockTab).TabRole(ETabRole::NomadTab)[MakeTSAVLaserPanel(GEditor?GEditor->GetEditorWorldContext().World():nullptr,FSimpleDelegate())];
+	})).SetDisplayName(LOCTEXT("LaserPreviewTitle","TSAV Laser Preview and ILDA")).SetMenuType(ETabSpawnerMenuType::Hidden);
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(TEXT("TSAVSceneBuilder"), FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&) {
+		return SNew(SDockTab).TabRole(ETabRole::NomadTab)[MakeTSAVSceneBuilder(GEditor ? GEditor->GetEditorWorldContext().World() : nullptr,FSimpleDelegate())];
+	})).SetDisplayName(LOCTEXT("SceneBuilderTitle", "TSAV Stage and Scenic Builder")).SetMenuType(ETabSpawnerMenuType::Hidden);
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(TEXT("TSAVLightingShow"), FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&) {
+		return SNew(SDockTab).TabRole(ETabRole::NomadTab)[SNew(STSAVLightingShowPanel).World(GEditor ? GEditor->GetEditorWorldContext().World() : nullptr)];
+	})).SetDisplayName(LOCTEXT("LightingShowTabTitle", "TSAV Lighting Show")).SetMenuType(ETabSpawnerMenuType::Hidden);
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
 		TSAVPrevisRuntimeEditor::CameraToolTabName,
 		FOnSpawnTab::CreateRaw(this, &FTSAVPrevisRuntimeEditorModule::SpawnCameraToolTab))
@@ -87,6 +108,11 @@ void FTSAVPrevisRuntimeEditorModule::ShutdownModule()
 
 	if (FSlateApplication::IsInitialized())
 	{
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("TSAVLightingShow"));
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("TSAVSceneBuilder"));
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("TSAVLaserPreview"));
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("TSAVRigTools"));
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TEXT("TSAVDMXConnections"));
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::CameraToolTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::CameraControllerToolTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(TSAVPrevisRuntimeEditor::DMXPatchToolTabName);
@@ -102,6 +128,21 @@ void FTSAVPrevisRuntimeEditorModule::RegisterMenus()
 	TSAVSuperStageIntegration::RegisterMenus();
 	UToolMenu* Menu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Tools"));
 	FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("TSAVPrevis"));
+	Section.AddMenuEntry(TEXT("OpenTSAVRigTools"),LOCTEXT("RigToolsLabel","TSAV Fixture Arrays and Rig Exchange"),
+		LOCTEXT("RigToolsTooltip","Create fixture arrays and transfer MVR rigs with embedded GDTF profiles."),FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([] { FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("TSAVRigTools"))); })));
+	Section.AddMenuEntry(TEXT("OpenTSAVDMXConnections"),LOCTEXT("DMXConnectionsLabel","TSAV DMX Connections and Monitor"),
+		LOCTEXT("DMXConnectionsTooltip","Configure Art-Net and sACN ports, connect native fixture libraries, and monitor channels."),FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([] { FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("TSAVDMXConnections"))); })));
+	Section.AddMenuEntry(TEXT("OpenTSAVLaserPreview"),LOCTEXT("LaserPreviewLabel","TSAV Laser Preview and ILDA"),
+		LOCTEXT("LaserPreviewTooltip","Create and import laser frames, configure projection and play animations."),FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([] { FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("TSAVLaserPreview"))); })));
+	Section.AddMenuEntry(TEXT("OpenTSAVSceneBuilder"), LOCTEXT("SceneBuilderLabel", "TSAV Stage and Scenic Builder"),
+		LOCTEXT("SceneBuilderTooltip", "Build and edit dimensioned stage, truss, scenery and machinery."), FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([] { FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("TSAVSceneBuilder"))); })));
+	Section.AddMenuEntry(TEXT("OpenTSAVLightingShow"), LOCTEXT("LightingShowLabel", "TSAV Lighting Show"),
+		LOCTEXT("LightingShowTooltip", "Native fixture patching, groups, presets, cues and effects."), FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([] { FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("TSAVLightingShow"))); })));
 	Section.AddMenuEntry(
 		TEXT("OpenTSAVCameraTool"),
 		LOCTEXT("OpenCameraToolLabel", "TSAV Camera Tool"),

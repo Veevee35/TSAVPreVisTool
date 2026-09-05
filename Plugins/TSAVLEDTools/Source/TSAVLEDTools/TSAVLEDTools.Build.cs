@@ -19,6 +19,7 @@ public class TSAVLEDTools : ModuleRules
 				"Engine",
 				"MediaAssets",
 				"Json",
+				"JsonUtilities",
 				"ProceduralMeshComponent",
 			}
 		);

@@ -3,6 +3,8 @@
 #include "TSAVPrevisRuntime.h"
 
 #include "Engine/GameInstance.h"
+#include "Engine/AssetManagerSettings.h"
+#include "Interfaces/IPluginManager.h"
 #include "Engine/Engine.h"
 #include "Engine/PointLight.h"
 #include "Engine/Texture.h"
@@ -298,6 +300,17 @@ namespace TSAVPhase2Validation::Private
 
 void FTSAVPrevisRuntimeModule::StartupModule()
 {
+	// The editor configuration registers the optional GameFeatures asset type.
+	// A standalone cook/runtime excludes that plugin, so its class cannot be scanned.
+	// Adjust this process's settings before AssetManager initialization; never save config.
+	const auto GameFeatures = IPluginManager::Get().FindPlugin(TEXT("GameFeatures"));
+	if (!GameFeatures.IsValid() || !GameFeatures->IsEnabled())
+	{
+		GetMutableDefault<UAssetManagerSettings>()->PrimaryAssetTypesToScan.RemoveAll([](const FPrimaryAssetTypeInfo& Type) {
+			return Type.PrimaryAssetType == FPrimaryAssetType(TEXT("GameFeatureData"))
+				&& Type.GetAssetBaseClass().ToString() == TEXT("/Script/GameFeatures.GameFeatureData");
+		});
+	}
 }
 
 void FTSAVPrevisRuntimeModule::ShutdownModule()

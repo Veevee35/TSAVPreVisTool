@@ -7,7 +7,9 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "TSAVDMXFixture.h"
+#include "Lighting/TSAVLightingShow.h"
 #include "ScopedTransaction.h"
+#include "Framework/Docking/TabManager.h"
 
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
@@ -30,6 +32,16 @@
 #include "Widgets/Views/SListView.h"
 
 #define LOCTEXT_NAMESPACE "STSAVDMXLightingConsoleTool"
+
+namespace
+{
+	bool SendToNativeShow(AActor* Actor, const TMap<FName, float>& Attributes)
+	{
+		if (auto* Fixture = Cast<ATSAVDMXFixture>(Actor))
+			if (auto* Show = ATSAVLightingShow::Find(Fixture->GetWorld())) { Show->SetProgrammer({Fixture}, Attributes); return true; }
+		return false;
+	}
+}
 
 void STSAVDMXLightingConsoleTool::Construct(const FArguments& InArgs)
 {
@@ -55,6 +67,9 @@ void STSAVDMXLightingConsoleTool::Construct(const FArguments& InArgs)
 				.Text(LOCTEXT("Subtitle", "Place fixtures from the TSAV library, then select their scene rows to patch and control individual lights. Each fixture uses its own mode attributes."))
 				.AutoWrapText(true).ColorAndOpacity(FSlateColor::UseSubduedForeground())
 			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0,0,0,8)
+			[SNew(SButton).Text(LOCTEXT("OpenShowPlayback", "Open Lighting Show — groups, presets, cues, effects and recording"))
+				.OnClicked_Lambda([] { FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("TSAVLightingShow"))); return FReply::Handled(); })]
 			+ SVerticalBox::Slot().FillHeight(1.0f)
 			[
 				SNew(SSplitter)
@@ -387,6 +402,8 @@ void STSAVDMXLightingConsoleTool::SendCommonValues()
 	for (const auto& Row : AllRows)
 	{
 		if (!SelectedDefinitionIds.Contains(Row->DefinitionId)) continue;
+		if (Row->bNativeActor && SendToNativeShow(Row->Actor.Get(), {{TEXT("Pan"),EffectiveValues.Pan},{TEXT("Tilt"),EffectiveValues.Tilt},
+			{TEXT("Dimmer"),EffectiveValues.Dimmer},{TEXT("Red"),EffectiveValues.Red},{TEXT("Green"),EffectiveValues.Green},{TEXT("Blue"),EffectiveValues.Blue},{TEXT("Zoom"),EffectiveValues.Zoom}})) { ++SentCount; continue; }
 		if (Row->bSuperStage)
 		{
 			TSAVSuperStageDMX::FFixture Fixture;
@@ -428,6 +445,7 @@ void STSAVDMXLightingConsoleTool::SendAttributeValue(const FName AttributeName, 
 	{
 		if (!SelectedDefinitionIds.Contains(Row->DefinitionId)) continue;
 		if (Row->bSuperStage) SentCount += TSAVSuperStageDMX::SendAttribute(Row->Actor.Get(), AttributeName, Effective) ? 1 : 0;
+		else if (Row->bNativeActor && SendToNativeShow(Row->Actor.Get(), {{AttributeName, Effective}})) ++SentCount;
 		else
 		{
 			FTSAVDMXFixtureDefinition Definition;
@@ -471,6 +489,7 @@ void STSAVDMXLightingConsoleTool::AddAttributeFader(const FName AttributeName, c
 			if (Row->bSuperStage) Sent += TSAVSuperStageDMX::SendAttribute(Row->Actor.Get(), AttributeName, Effective, Instance) ? 1 : 0;
 			else if (Instance == 0)
 			{
+				if (Row->bNativeActor && SendToNativeShow(Row->Actor.Get(), {{AttributeName, Effective}})) { ++Sent; continue; }
 				FTSAVDMXFixtureDefinition Definition;
 				if (GetRowDefinition(*Row, Definition)) Sent += TSAVDMXEditorUtils::SendAttributeValue(Definition, AttributeName, Effective) ? 1 : 0;
 			}

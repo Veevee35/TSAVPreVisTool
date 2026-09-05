@@ -6,6 +6,8 @@
 #include "DMXTypes.h"
 #include "GameFramework/Actor.h"
 #include "TSAVDMXFixtureCatalog.h"
+#include "TSAVStateSerializable.h"
+#include "TSAVFixtureOptics.h"
 
 #include "TSAVDMXFixture.generated.h"
 
@@ -16,6 +18,8 @@ class USceneComponent;
 class USpotLightComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+class UMaterialInstanceDynamic;
+struct FDMXFixtureMode;
 
 /**
  * Reusable, articulated DMX fixture assembled by the TSAV DMX Fixture Builder.
@@ -24,7 +28,7 @@ class UStaticMeshComponent;
  * generated DMX fixture patch supplies normalized GDTF attributes to the actor.
  */
 UCLASS(Blueprintable, meta = (DisplayName = "TSAV GDTF DMX Fixture"))
-class TSAVLEDTOOLS_API ATSAVDMXFixture final : public AActor
+class TSAVLEDTOOLS_API ATSAVDMXFixture final : public AActor, public ITSAVStateSerializable
 {
 	GENERATED_BODY()
 
@@ -41,6 +45,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Definition")
 	FString GDTFModeName;
+
+	/** Original standard profile bytes retained for MVR round trips. */
+	UPROPERTY(SaveGame) FString ExchangeGDTFBase64;
+	UPROPERTY(SaveGame) FString ExchangeGDTFName;
+	UPROPERTY(SaveGame) FGuid ExchangeProfileId;
+	bool SetStandaloneMode(const FDMXFixtureMode& Mode, int32 Universe, int32 Address);
 
 	/** Optional separate meshes. A single full-fixture model can be assigned as Head Mesh. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Model")
@@ -157,6 +167,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Beam", meta = (ClampMin = "1.0"))
 	float AttenuationRadiusCm = 3000.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Optics")
+	FTSAVFixtureOptics Optics;
+
+	/** Set optical animation time for deterministic show previews. */
+	void SetOpticsTime(float Seconds);
+	int32 GetActivePrismBeamCount() const;
+	FIntPoint GetMatrixDimensions() const;
+	static FName MatrixAttributeKey(FIntPoint Cell, FName Attribute);
+	static bool ParseMatrixAttributeKey(FName Key, FIntPoint& Cell, FName& Attribute);
+	bool SetMatrixCellAttributes(FIntPoint Cell, const TMap<FName,float>& Attributes);
+	USpotLightComponent* GetMatrixCellLight(FIntPoint Cell) const;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="TSAV Fixture|Matrix") FVector2D CellSpacingCm = FVector2D(10,10);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TSAV Fixture|Beam")
 	FLinearColor DefaultLightColor = FLinearColor::White;
 
@@ -207,6 +230,9 @@ public:
 
 	/** Apply partial programmer input without resetting attributes absent from the update. */
 	void ApplyAttributeValues(const FDMXNormalizedAttributeValueMap& Values, bool bSnap = false);
+	FDMXNormalizedAttributeValueMap GetAttributeValues() const;
+	virtual FString CaptureTSAVState() const override;
+	virtual bool RestoreTSAVState(const FString& State) override;
 
 	/** Applies a generated catalog option, including model, articulation, beam, and default DMX patch. */
 	UFUNCTION(BlueprintCallable, Category = "TSAV Fixture|Definition")
@@ -245,6 +271,13 @@ protected:
 #endif
 
 private:
+	UPROPERTY(Instanced)
+	TObjectPtr<UDMXLibrary> RestoredPatchLibrary;
+	FDMXNormalizedAttributeValueMap LastAttributeValues;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> OpticalMaterial;
+	UPROPERTY(Transient) TArray<TObjectPtr<USpotLightComponent>> PrismLights;
+	UPROPERTY(Transient) TArray<TObjectPtr<USpotLightComponent>> MatrixLights;
+	float OpticsTime = 0;
 	/** Library-owned patch reference, serialized with the actor and tracked by Undo. */
 	UPROPERTY()
 	TObjectPtr<UDMXEntityFixturePatch> IndividualPatch;
@@ -254,6 +287,9 @@ private:
 
 	void ApplyModelSetup();
 	void ApplyMotionAndBeam(float DeltaSeconds, bool bSnap);
+	void ApplyOptics(float DeltaSeconds, float OuterAngle);
+	bool ApplyMatrixOptics();
+	float OpticsAttribute(FName Attribute, float Default) const;
 	void SetTargetsFromNormalized(float Pan, float Tilt, float Dimmer, const FLinearColor& Color, float Zoom);
 	static bool FindAttributeValue(const FDMXNormalizedAttributeValueMap& Values, FName PreferredName, const TArray<FString>& Aliases, float& OutValue);
 	static FString CanonicalizeAttribute(FName AttributeName);

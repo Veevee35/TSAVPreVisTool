@@ -98,6 +98,14 @@ void ATSAVCameraActor::Destroyed()
 {
 	if (CameraId.IsValid() && GetWorld())
 	{
+		// Atomic project load stages replacements with their saved provider IDs.
+		// Retiring the old camera must not erase routes to its live replacement.
+		bool bHasReplacement=false;
+		for (TActorIterator<ATSAVCameraActor> It(GetWorld()); It; ++It)
+		{
+			if (*It!=this && !It->IsActorBeingDestroyed() && It->CameraId==CameraId) { bHasReplacement=true; break; }
+		}
+		if (bHasReplacement) { Super::Destroyed(); return; }
 		for (TActorIterator<ATSAVVideoSwitcher> It(GetWorld()); It; ++It)
 		{
 			It->Modify();
